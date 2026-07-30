@@ -217,6 +217,15 @@ export interface NativeScrollbackCommittedRows {
 }
 
 /**
+ * A component that retires a committed local prefix reports the removed row
+ * count once so the engine can rebase its frame coordinates without replaying
+ * or rewriting the immutable terminal tape.
+ */
+export interface NativeScrollbackRetiredRows {
+	takeNativeScrollbackRetiredRows(): number;
+}
+
+/**
  * A component that discards rows after they enter native scrollback implements
  * this hook so a destructive full replay can rehydrate its complete frame.
  */
@@ -1202,8 +1211,16 @@ export class TUI extends Container {
 			// subtree provably did not change (content mutations route through
 			// a render request, which would have made this frame a full one) —
 			// reuse its previous rows and seam report without calling render().
-			const reuse =
+			let reuse =
 				partialRoots !== null && previous !== undefined && previous.component === child && !partialRoots.has(child);
+			if (
+				previous !== undefined &&
+				previous.component === child &&
+				this.#consumeNativeScrollbackRetirement(child, index, previousSegments) > 0
+			) {
+				reuse = false;
+				chainStable = false;
+			}
 			let childLines: readonly string[];
 			let liveLocalStart: number | undefined;
 			let liveRegionPinned = false;
@@ -1225,6 +1242,13 @@ export class TUI extends Container {
 				const prevStart = previous !== undefined && previous.component === child ? previous.start : offset;
 				setNativeScrollbackCommittedRows(child, Math.min(prevRows, Math.max(0, this.#committedRows - prevStart)));
 				childLines = child.render(width);
+				if (
+					previous !== undefined &&
+					previous.component === child &&
+					this.#consumeNativeScrollbackRetirement(child, index, previousSegments) > 0
+				) {
+					chainStable = false;
+				}
 				const liveRegionStart = getNativeScrollbackLiveRegionStart(child);
 				if (liveRegionStart !== undefined) {
 					liveLocalStart = Number.isFinite(liveRegionStart)
@@ -1306,6 +1330,69 @@ export class TUI extends Container {
 		this.#renderStablePrefixRows = stableRows;
 		this.#preparedValidRows = Math.min(this.#preparedValidRows, stableRows);
 		return frame;
+	}
+
+	#consumeNativeScrollbackRetirement(
+		component: Component,
+		segmentIndex: number,
+		previousSegments: FrameSegment[],
+	): number {
+		const previous = previousSegments[segmentIndex];
+		if (previous === undefined || previous.component !== component) return 0;
+		const value = (component as Component & Partial<NativeScrollbackRetiredRows>).takeNativeScrollbackRetiredRows?.();
+		const rows = value !== undefined && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
+		const committedRows = Math.min(previous.rowCount, Math.max(0, this.#committedRows - previous.start));
+		const appliedRows = Math.min(rows, committedRows);
+		if (appliedRows > 0) {
+			this.#rebaseNativeScrollbackRetirement(previous.start, appliedRows, segmentIndex, previousSegments);
+		}
+		return appliedRows;
+	}
+
+	#rebaseNativeScrollbackRetirement(
+		start: number,
+		rows: number,
+		segmentIndex: number,
+		previousSegments: FrameSegment[],
+	): void {
+		const end = start + rows;
+		const rebaseRow = (row: number): number => (row <= start ? row : Math.max(start, row - rows));
+
+		this.#committedPrefix.splice(start, rows);
+		this.#committedRows = rebaseRow(this.#committedRows);
+		this.#committedPrefixAuditRows = rebaseRow(this.#committedPrefixAuditRows);
+		this.#windowTopRow = rebaseRow(this.#windowTopRow);
+		this.#previousFrameLength = rebaseRow(this.#previousFrameLength);
+		this.#hardwareCursorRow = rebaseRow(this.#hardwareCursorRow);
+		if (this.#hardwareCursorState) {
+			this.#hardwareCursorState.row = rebaseRow(this.#hardwareCursorState.row);
+		}
+
+		this.#composedFrame.splice(start, rows);
+		this.#preparedFrame.splice(start, rows);
+		this.#preparedMeta.splice(start, rows);
+		this.#preparedValidRows = rebaseRow(this.#preparedValidRows);
+
+		for (let i = this.#frameCursorMarkers.length - 1; i >= 0; i--) {
+			const marker = this.#frameCursorMarkers[i]!;
+			if (marker.row >= start && marker.row < end) {
+				this.#frameCursorMarkers.splice(i, 1);
+			} else if (marker.row >= end) {
+				marker.row -= rows;
+			}
+		}
+
+		const retiredSegment = previousSegments[segmentIndex];
+		if (retiredSegment !== undefined) {
+			retiredSegment.rowCount = Math.max(0, retiredSegment.rowCount - rows);
+			if (retiredSegment.liveLocalStart !== undefined) {
+				retiredSegment.liveLocalStart = Math.max(0, retiredSegment.liveLocalStart - rows);
+			}
+		}
+		for (let i = segmentIndex + 1; i < previousSegments.length; i++) {
+			const segment = previousSegments[i];
+			if (segment !== undefined) segment.start = rebaseRow(segment.start);
+		}
 	}
 
 	/** Drop cached cursor markers at/after `fromRow` (those rows re-ingest). */

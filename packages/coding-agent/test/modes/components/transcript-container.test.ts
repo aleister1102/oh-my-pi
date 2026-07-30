@@ -92,6 +92,22 @@ class CountingFinalizedBlock implements Component {
 	}
 }
 
+class ReplayAwareFinalizedBlock extends CountingFinalizedBlock {
+	replayPreparations = 0;
+
+	prepareNativeScrollbackReplay(): void {
+		this.replayPreparations++;
+	}
+}
+
+class WidthSensitiveFinalizedBlock implements Component {
+	invalidate(): void {}
+
+	render(width: number): string[] {
+		return width <= 40 ? ["n0", "n1", "n2"] : ["wide"];
+	}
+}
+
 // A finalized block that can still mutate afterwards (an assistant message whose
 // suppressed inline error is restored at the next turn, late tool-result images)
 // and reports each mutation through the transcript block version protocol.
@@ -349,6 +365,99 @@ describe("TranscriptContainer", () => {
 		expect(container.getNativeScrollbackLiveRegionStart()).toBe(2);
 	});
 
+	it("drops committed finalized head rows and rehydrates them for a full replay", () => {
+		const container = new TranscriptContainer();
+		const history = new CountingFinalizedBlock(["committed-history"]);
+		const tail = new CountingFinalizedBlock(["retained-tail"]);
+		container.addChild(history);
+		container.addChild(tail);
+
+		expect(container.render(40)).toEqual(["committed-history", "", "retained-tail"]);
+		container.setNativeScrollbackCommittedRows(2);
+		expect(container.render(40)).toEqual(["retained-tail"]);
+		expect(history.renderCount).toBe(1);
+		expect(container.renderFullHistory(40)).toEqual(["committed-history", "", "retained-tail"]);
+		expect(history.renderCount).toBe(2);
+		expect(container.render(40)).toEqual(["retained-tail"]);
+		expect(history.renderCount).toBe(2);
+		expect(container.takeNativeScrollbackRetiredRows()).toBe(2);
+		expect(container.takeNativeScrollbackRetiredRows()).toBe(0);
+
+		container.prepareNativeScrollbackReplay();
+		expect(container.takeNativeScrollbackRetiredRows()).toBe(0);
+		// The TUI supplies its previous committed count immediately before the
+		// replay render; the complete frame must still survive this one compose.
+		container.setNativeScrollbackCommittedRows(2);
+		expect(container.render(40)).toEqual(["committed-history", "", "retained-tail"]);
+		expect(history.renderCount).toBe(3);
+	});
+
+	it("rerenders retained children after recursive replay preparation", () => {
+		const container = new TranscriptContainer();
+		const retained = new ReplayAwareFinalizedBlock(["retained"]);
+		container.addChild(retained);
+
+		expect(container.render(40)).toEqual(["retained"]);
+		container.setNativeScrollbackCommittedRows(1);
+		expect(container.render(40)).toEqual(["retained"]);
+		expect(retained.renderCount).toBe(1);
+
+		container.prepareNativeScrollbackReplay();
+		container.setNativeScrollbackCommittedRows(1);
+		expect(container.render(40)).toEqual(["retained"]);
+		expect(retained.replayPreparations).toBe(1);
+		expect(retained.renderCount).toBe(2);
+	});
+
+	it("does not compact committed rows using stale width coordinates", () => {
+		const container = new TranscriptContainer();
+		container.addChild(new WidthSensitiveFinalizedBlock());
+		container.addChild(new CountingFinalizedBlock(["tail"]));
+
+		expect(container.render(40)).toEqual(["n0", "n1", "n2", "", "tail"]);
+		container.setNativeScrollbackCommittedRows(2);
+		expect(container.render(80)).toEqual(["wide", "", "tail"]);
+		expect(container.takeNativeScrollbackRetiredRows()).toBe(0);
+
+		// Publication in the new geometry makes the head and separator safe to retire.
+		container.setNativeScrollbackCommittedRows(2);
+		expect(container.render(80)).toEqual(["tail"]);
+		expect(container.takeNativeScrollbackRetiredRows()).toBe(2);
+	});
+
+	it("does not retire finalized blocks whose render is empty after stripping", () => {
+		const container = new TranscriptContainer();
+		const empty = new CountingFinalizedBlock(["", "  "]);
+		container.addChild(empty);
+		container.addChild(new CountingFinalizedBlock(["tail"]));
+
+		expect(container.render(40)).toEqual(["tail"]);
+		container.setNativeScrollbackCommittedRows(100);
+		expect(container.render(40)).toEqual(["tail"]);
+		expect(empty.renderCount).toBe(1);
+		container.invalidate();
+		expect(container.render(40)).toEqual(["tail"]);
+		expect(empty.renderCount).toBe(2);
+		expect(container.isBlockUncommitted(empty)).toBe(true);
+	});
+
+	it("resets compacted transcript state when cleared", () => {
+		const container = new TranscriptContainer();
+		const history = new CountingFinalizedBlock(["history"]);
+		container.addChild(history);
+		container.addChild(new CountingFinalizedBlock(["tail"]));
+
+		expect(container.render(40)).toEqual(["history", "", "tail"]);
+		container.setNativeScrollbackCommittedRows(2);
+		expect(container.render(40)).toEqual(["tail"]);
+
+		container.clear();
+		const fresh = new CountingFinalizedBlock(["fresh"]);
+		container.addChild(fresh);
+		expect(container.render(40)).toEqual(["fresh"]);
+		expect(fresh.renderCount).toBe(1);
+	});
+
 	it("does not re-render finalized rows already committed to native scrollback", () => {
 		const container = new TranscriptContainer();
 		const committed = new CountingFinalizedBlock(["committed"]);
@@ -495,6 +604,29 @@ describe("TranscriptContainer spacing", () => {
 		// Separator sits at index 2; the live block's content begins at index 3.
 		expect(container.render(40)).toEqual(["a1", "a2", "", "b"]);
 		expect(container.getNativeScrollbackLiveRegionStart()).toBe(3);
+	});
+	it("does not compact across an uncommitted separator", () => {
+		const container = new TranscriptContainer();
+		const history = new CountingFinalizedBlock(["history"]);
+		container.addChild(history);
+		container.addChild(new CountingFinalizedBlock(["tail"]));
+
+		expect(container.render(40)).toEqual(["history", "", "tail"]);
+		container.setNativeScrollbackCommittedRows(1);
+		expect(container.render(40)).toEqual(["history", "", "tail"]);
+		expect(history.renderCount).toBe(1);
+	});
+
+	it("preserves the inter-block gap after every existing row commits", () => {
+		const container = new TranscriptContainer();
+		container.addChild(new CountingFinalizedBlock(["old"]));
+
+		expect(container.render(40)).toEqual(["old"]);
+		container.setNativeScrollbackCommittedRows(1);
+		expect(container.render(40)).toEqual(["old"]);
+
+		container.addChild(new CountingFinalizedBlock(["new"]));
+		expect(container.render(40)).toEqual(["old", "", "new"]);
 	});
 });
 
@@ -667,6 +799,34 @@ describe("TranscriptContainer isBlockUncommitted", () => {
 		expect(container.isBlockUncommitted(empty)).toBe(true);
 		container.setNativeScrollbackCommittedRows(100);
 		expect(container.isBlockUncommitted(empty)).toBe(true);
+	});
+	it("keeps compacted committed blocks marked committed", () => {
+		const container = new TranscriptContainer();
+		const committed = new StreamingBlock(["committed"], true);
+		container.addChild(committed);
+		container.addChild(new StreamingBlock(["tail"], true));
+
+		expect(container.render(40)).toEqual(["committed", "", "tail"]);
+		container.setNativeScrollbackCommittedRows(2);
+		expect(container.render(40)).toEqual(["tail"]);
+
+		expect(container.isBlockUncommitted(committed)).toBe(false);
+	});
+
+	it("survives sparse compacted segment holes when checking uncommitted status", () => {
+		const container = new TranscriptContainer();
+		const committed = new StreamingBlock(["committed"], true);
+		const live = new StreamingBlock(["live"], true);
+		container.addChild(committed);
+		container.addChild(live);
+
+		expect(container.render(40)).toEqual(["committed", "", "live"]);
+		container.setNativeScrollbackCommittedRows(2);
+		expect(container.render(40)).toEqual(["live"]);
+		expect(container.render(40)).toEqual(["live"]);
+		expect(() => container.isBlockUncommitted(live)).not.toThrow();
+		expect(() => container.isBlockUncommitted(committed)).not.toThrow();
+		expect(container.isBlockUncommitted(committed)).toBe(false);
 	});
 });
 

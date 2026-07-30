@@ -144,7 +144,9 @@ export class CommandController {
 	async handleDebugTranscriptCommand(): Promise<void> {
 		try {
 			const width = Math.max(1, this.ctx.ui.terminal.columns);
-			const renderedLines = this.ctx.chatContainer.render(width).map(line => replaceTabs(Bun.stripANSI(line)));
+			const renderedLines = this.ctx.chatContainer
+				.renderFullHistory(width)
+				.map(line => replaceTabs(Bun.stripANSI(line)));
 			const rendered = renderedLines.join("\n").trimEnd();
 			if (!rendered) {
 				this.ctx.showError("No messages to dump yet.");

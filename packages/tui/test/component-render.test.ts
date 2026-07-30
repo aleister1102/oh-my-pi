@@ -7,6 +7,7 @@ import {
 	type NativeScrollbackCommittedRows,
 	type NativeScrollbackLiveRegion,
 	type NativeScrollbackReplay,
+	type NativeScrollbackRetiredRows,
 	TUI,
 } from "@oh-my-pi/pi-tui";
 import { StressRenderScheduler } from "./render-stress-scheduler";
@@ -79,11 +80,14 @@ class RenderCountingTUI extends TUI {
 	}
 }
 
-class ReplayVirtualizedLines implements Component, NativeScrollbackCommittedRows, NativeScrollbackReplay {
+class ReplayVirtualizedLines
+	implements Component, NativeScrollbackCommittedRows, NativeScrollbackReplay, NativeScrollbackRetiredRows
+{
 	readonly lines: readonly string[];
 	replayPreparations = 0;
 	#compacted = false;
 	#replayPending = false;
+	#retiredRowsPending = 0;
 
 	constructor(lines: readonly string[]) {
 		this.lines = lines;
@@ -92,12 +96,23 @@ class ReplayVirtualizedLines implements Component, NativeScrollbackCommittedRows
 	invalidate(): void {}
 
 	setNativeScrollbackCommittedRows(rows: number): void {
-		if (rows >= 4) this.#compacted = true;
+		if (rows >= 4 && !this.#compacted) {
+			this.#compacted = true;
+			this.#retiredRowsPending += 4;
+		}
 	}
 
 	prepareNativeScrollbackReplay(): void {
 		this.replayPreparations++;
+		this.#compacted = false;
 		this.#replayPending = true;
+		this.#retiredRowsPending = 0;
+	}
+
+	takeNativeScrollbackRetiredRows(): number {
+		const rows = this.#retiredRowsPending;
+		this.#retiredRowsPending = 0;
+		return rows;
 	}
 
 	render(_width: number): readonly string[] {
@@ -106,6 +121,37 @@ class ReplayVirtualizedLines implements Component, NativeScrollbackCommittedRows
 			return this.lines;
 		}
 		return this.#compacted ? this.lines.slice(4) : this.lines;
+	}
+}
+
+class OutOfBandVirtualizedLines implements Component, NativeScrollbackCommittedRows, NativeScrollbackRetiredRows {
+	readonly lines: readonly string[];
+	retiredRows = 0;
+	#committedRows = 0;
+	#retiredRowsPending = 0;
+
+	constructor(lines: readonly string[]) {
+		this.lines = lines;
+	}
+
+	invalidate(): void {}
+
+	setNativeScrollbackCommittedRows(rows: number): void {
+		this.#committedRows = rows;
+	}
+
+	takeNativeScrollbackRetiredRows(): number {
+		const rows = this.#retiredRowsPending;
+		this.#retiredRowsPending = 0;
+		return rows;
+	}
+
+	render(_width: number): readonly string[] {
+		const rows = Math.min(this.#committedRows, this.lines.length - this.retiredRows);
+		this.retiredRows += rows;
+		this.#committedRows -= rows;
+		this.#retiredRowsPending += rows;
+		return this.lines.slice(this.retiredRows);
 	}
 }
 
@@ -136,6 +182,79 @@ describe("TUI native scrollback replay", () => {
 			await scheduler.drain(term);
 
 			expect(transcript.replayPreparations).toBe(1);
+			const buffer = strip(term.getScrollBuffer());
+			expect(buffer).toContain("history-0");
+			expect(buffer).toContain("tail-3");
+		} finally {
+			tui.stop();
+			await term.flush();
+		}
+	});
+
+	it("rebases virtualized retirement without repeated destructive replay", async () => {
+		const term = new VirtualTerminal(40, 4, 1_000);
+		const scheduler = new StressRenderScheduler();
+		const tui = new TUI(term, undefined, { renderScheduler: scheduler });
+		const transcript = new ReplayVirtualizedLines([
+			"history-0",
+			"history-1",
+			"history-2",
+			"history-3",
+			"tail-0",
+			"tail-1",
+			"tail-2",
+			"tail-3",
+		]);
+		tui.addChild(transcript);
+		tui.setScrollbackRebuild(true);
+
+		try {
+			tui.start();
+			await scheduler.drain(term);
+			tui.requestRender();
+			await scheduler.drain(term);
+			expect(transcript.replayPreparations).toBe(0);
+
+			tui.requestRender();
+			await scheduler.drain(term);
+			expect(transcript.replayPreparations).toBe(0);
+			const buffer = strip(term.getScrollBuffer());
+			expect(buffer).toContain("history-0");
+			expect(buffer).toContain("tail-3");
+		} finally {
+			tui.stop();
+			await term.flush();
+		}
+	});
+
+	it("consumes out-of-band retirement before publishing new coordinates", async () => {
+		const term = new VirtualTerminal(40, 4, 1_000);
+		const scheduler = new StressRenderScheduler();
+		const tui = new TUI(term, undefined, { renderScheduler: scheduler });
+		const transcript = new OutOfBandVirtualizedLines([
+			"history-0",
+			"history-1",
+			"history-2",
+			"history-3",
+			"history-4",
+			"history-5",
+			"history-6",
+			"history-7",
+			"tail-0",
+			"tail-1",
+			"tail-2",
+			"tail-3",
+		]);
+		tui.addChild(transcript);
+
+		try {
+			tui.start();
+			await scheduler.drain(term);
+			expect(transcript.render(40)).toEqual(["tail-0", "tail-1", "tail-2", "tail-3"]);
+
+			tui.requestRender();
+			await scheduler.drain(term);
+			expect(transcript.retiredRows).toBe(8);
 			const buffer = strip(term.getScrollBuffer());
 			expect(buffer).toContain("history-0");
 			expect(buffer).toContain("tail-3");
