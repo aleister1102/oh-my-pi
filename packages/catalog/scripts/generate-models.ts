@@ -577,6 +577,36 @@ async function generateModels() {
 		contextWindow: 1_000_000,
 		maxTokens: 131_072,
 	} as ModelSpec<"anthropic-messages">);
+	// GLM-5.3-Flash is served by the same coding-plan endpoint but is absent
+	// from `/v1/models`-derived metadata. Its id has no `v` marker despite
+	// accepting native image blocks, so declare image input explicitly.
+	allModels.push({
+		id: "glm-5.3-flash",
+		name: "GLM-5.3-Flash",
+		api: "anthropic-messages",
+		provider: "zai",
+		baseUrl: "https://api.z.ai/api/anthropic",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 },
+		contextWindow: 1_000_000,
+		maxTokens: 131_072,
+	} as ModelSpec<"anthropic-messages">);
+	// The China-hosted Coding Plan uses OpenAI-compatible chat completions.
+	// Keep the same curated Flash fallback available when its authoritative
+	// `/models` discovery is unavailable during generation or first-run startup.
+	allModels.push({
+		id: "glm-5.3-flash",
+		name: "GLM-5.3-Flash",
+		api: "openai-completions",
+		provider: "zhipu-coding-plan",
+		baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 },
+		contextWindow: 1_000_000,
+		maxTokens: 131_072,
+	} as ModelSpec<"openai-completions">);
 	// Seed Meta's documented Muse model so first-run selection does not depend on
 	// credentials or live discovery.
 	allModels.push(...META_MUSE_STATIC_MODELS);

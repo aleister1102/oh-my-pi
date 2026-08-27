@@ -43,6 +43,21 @@ function glm53OnZaiAnthropic(): Model<"anthropic-messages"> {
 	} satisfies ModelSpec<"anthropic-messages">);
 }
 
+function glm53FlashOnZaiAnthropic(): Model<"anthropic-messages"> {
+	return buildModel({
+		id: "glm-5.3-flash",
+		name: "GLM-5.3-Flash",
+		api: "anthropic-messages",
+		provider: "zai",
+		baseUrl: "https://api.z.ai/api/anthropic",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 },
+		contextWindow: 1_000_000,
+		maxTokens: 131_072,
+	} satisfies ModelSpec<"anthropic-messages">);
+}
+
 async function captureChatBody(
 	model: Model<"openai-completions">,
 	options: { reasoning?: Effort; disableReasoning?: boolean },
@@ -93,6 +108,15 @@ describe("GLM-5.3 reasoning effort wire mapping", () => {
 
 	it("derives mandatory reasoning on the zai Anthropic endpoint too", () => {
 		const model = glm53OnZaiAnthropic();
+		expect(model.thinking?.efforts).toEqual([Effort.Low, Effort.High, Effort.Max]);
+		expect(model.thinking?.requiresEffort).toBe(true);
+		expect(model.thinking?.defaultLevel).toBe(Effort.Max);
+		expect(model.thinking?.mode).toBe("anthropic-budget-effort");
+	});
+
+	it("derives mandatory reasoning and image input for Flash on the zai Anthropic endpoint", () => {
+		const model = glm53FlashOnZaiAnthropic();
+		expect(model.input).toEqual(["text", "image"]);
 		expect(model.thinking?.efforts).toEqual([Effort.Low, Effort.High, Effort.Max]);
 		expect(model.thinking?.requiresEffort).toBe(true);
 		expect(model.thinking?.defaultLevel).toBe(Effort.Max);

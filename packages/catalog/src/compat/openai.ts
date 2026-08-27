@@ -15,6 +15,7 @@ import {
 	isClaudeModelId,
 	isDeepseekModelIdOrName,
 	isGlm52ReasoningEffortModelId,
+	isGlm53ReasoningEffortModelId,
 	isGrokReasoningEffortCapable,
 	isGrokXHighEffortCapable,
 	isKimiK3ModelId,
@@ -299,7 +300,8 @@ export function buildOpenAICompat(spec: ModelSpec<"openai-completions">): Resolv
 	const isCerebras = modelMatchesHost(hostModel, "cerebras");
 	const isZai = modelMatchesHost(hostModel, "zai");
 	const isZhipu = modelMatchesHost(hostModel, "zhipu");
-	const supportsZaiReasoningEffort = (isZai || isZhipu) && isGlm52ReasoningEffortModelId(spec.id);
+	const supportsZaiReasoningEffort =
+		(isZai || isZhipu) && (isGlm52ReasoningEffortModelId(spec.id) || isGlm53ReasoningEffortModelId(spec.id));
 	const isKilo = modelMatchesHost(hostModel, "kilo");
 	const isKimiModel = isKimiModelId(spec.id);
 	const isMoonshotNative = modelMatchesHost(hostModel, "moonshotNative");

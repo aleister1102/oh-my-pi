@@ -3,6 +3,8 @@ import {
 	hasOpus47ApiRestrictions,
 	isClaudeModelId,
 	isGeminiModelId,
+	isGlm52ReasoningEffortModelId,
+	isGlm53ReasoningEffortModelId,
 	isGlmVisionModelId,
 	isGrokModelId,
 	isGrokMultiAgentModelId,
@@ -284,18 +286,26 @@ describe("isReasoningGlmModelId", () => {
 		expect(isReasoningGlmModelId("glm-5-turbo")).toBe(true);
 		expect(isReasoningGlmModelId("glm-5.1")).toBe(true);
 		expect(isReasoningGlmModelId("glm-5.2")).toBe(true);
-		// Family match is future-proof: new integers need no allowlist entry.
 		expect(isReasoningGlmModelId("glm-5.3")).toBe(true);
 		expect(isReasoningGlmModelId("glm-6")).toBe(true);
+		// GLM-5.3-Flash is the first `-flash` SKU with mandatory thinking.
+		expect(isReasoningGlmModelId("glm-5.3-flash")).toBe(true);
 		// Namespaced ids are stripped before classification.
 		expect(isReasoningGlmModelId("z-ai/glm-5-turbo")).toBe(true);
 	});
 
-	test("excludes pre-4.5, vision, flash, and preview SKUs", () => {
+	test("admits Flash only in the GLM-5.3 effort predicate", () => {
+		expect(isGlm53ReasoningEffortModelId("glm-5.3-flash")).toBe(true);
+		expect(isGlm52ReasoningEffortModelId("glm-5.3-flash")).toBe(false);
+		expect(isGlm52ReasoningEffortModelId("glm-5.2")).toBe(true);
+	});
+
+	test("excludes pre-4.5, vision, pre-5.3 flash, flashx, and preview SKUs", () => {
 		expect(isReasoningGlmModelId("glm-4")).toBe(false);
 		expect(isReasoningGlmModelId("glm-4.4")).toBe(false);
 		expect(isReasoningGlmModelId("glm-5-preview")).toBe(false);
 		expect(isReasoningGlmModelId("glm-4.5-flash")).toBe(false);
+		expect(isReasoningGlmModelId("glm-4.7-flash")).toBe(false);
 		expect(isReasoningGlmModelId("glm-4.7-flashx")).toBe(false);
 		expect(isReasoningGlmModelId("glm-4.5v")).toBe(false);
 		expect(isReasoningGlmModelId("qwen3.5")).toBe(false);
@@ -318,6 +328,14 @@ describe("isGlmVisionModelId", () => {
 		expect(isGlmVisionModelId("glm-4v")).toBe(true);
 		expect(isGlmVisionModelId("glm-4.5v")).toBe(true);
 		expect(isGlmVisionModelId("glm-4v-plus")).toBe(true);
+	});
+
+	test("matches the natively multimodal flash line from GLM-5.3-Flash on", () => {
+		expect(isGlmVisionModelId("glm-5.3-flash")).toBe(true);
+		expect(isGlmVisionModelId("zai-org/GLM-5.3-Flash")).toBe(true);
+		expect(isGlmVisionModelId("glm-4.5-flash")).toBe(false);
+		expect(isGlmVisionModelId("glm-4.7-flash")).toBe(false);
+		expect(isGlmVisionModelId("glm-5.3")).toBe(false);
 	});
 
 	test("excludes non-vision GLM ids (the old `includes('v')` false positives)", () => {

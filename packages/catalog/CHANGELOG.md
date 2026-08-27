@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Z.AI and Zhipu Coding Plan `glm-5.3-flash` support with native image input, 1M context, and mandatory reasoning.
+
 ## [18.0.5] - 2026-08-25
 
 ### Added

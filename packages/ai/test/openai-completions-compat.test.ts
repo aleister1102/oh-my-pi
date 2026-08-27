@@ -101,6 +101,26 @@ function zaiGlm52Model(): Model<"openai-completions"> {
 	} satisfies ModelSpec<"openai-completions">);
 }
 
+function zaiGlm53FlashModel(): Model<"openai-completions"> {
+	return buildModel({
+		id: "glm-5.3-flash",
+		name: "GLM-5.3-Flash",
+		api: "openai-completions",
+		provider: "zhipu-coding-plan",
+		baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+		reasoning: true,
+		compat: {
+			thinkingFormat: "zai",
+			reasoningContentField: "reasoning_content",
+			supportsDeveloperRole: false,
+		},
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1_000_000,
+		maxTokens: 131_072,
+	} satisfies ModelSpec<"openai-completions">);
+}
+
 function kimiZaiModel(): Model<"openai-completions"> {
 	return buildModel({
 		...gpt4oMiniSpec,
@@ -926,6 +946,41 @@ describe("openai-completions compatibility", () => {
 		expect(payloadObject?.reasoning_effort).toBe("max");
 		expect(payloadObject?.tool_stream).toBe(true);
 		expect(payloadObject?.max_tokens).toBe(65_536);
+	});
+
+	it("applies the full GLM-5.3-Flash output cap and tool-stream wire shape", async () => {
+		const model = zaiGlm53FlashModel();
+		expect(model.thinking?.efforts).toEqual([Effort.Low, Effort.High, Effort.Max]);
+		expect(model.thinking?.requiresEffort).toBe(true);
+		expect(model.compat.supportsReasoningEffort).toBe(true);
+
+		const readTool: Tool = {
+			name: "read",
+			description: "Read a file",
+			parameters: {
+				type: "object",
+				properties: { path: { type: "string" } },
+				required: ["path"],
+			},
+		};
+		const { promise, resolve } = Promise.withResolvers<unknown>();
+		streamOpenAICompletions(
+			model,
+			{ ...baseContext(), tools: [readTool] },
+			{
+				apiKey: "test-key",
+				reasoning: "max",
+				signal: createAbortedSignal(),
+				onPayload: payload => resolve(payload),
+				maxTokens: 200_000,
+			},
+		);
+
+		const payload = await promise;
+		const payloadObject = toObject(payload);
+		expect(payloadObject?.reasoning_effort).toBe("max");
+		expect(payloadObject?.tool_stream).toBe(true);
+		expect(payloadObject?.max_tokens).toBe(131_072);
 	});
 
 	it("keeps Z.AI tool streaming disabled for native Kimi reasoning models", async () => {

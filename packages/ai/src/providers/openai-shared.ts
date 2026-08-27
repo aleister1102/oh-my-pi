@@ -1,6 +1,10 @@
 import type { Effort } from "@oh-my-pi/pi-catalog/effort";
 import { toFirepassWireModelId, toFireworksWireModelId } from "@oh-my-pi/pi-catalog/fireworks-model-id";
-import { isGlm52ReasoningEffortModelId, isKimiK3ModelId } from "@oh-my-pi/pi-catalog/identity";
+import {
+	isGlm52ReasoningEffortModelId,
+	isGlm53ReasoningEffortModelId,
+	isKimiK3ModelId,
+} from "@oh-my-pi/pi-catalog/identity";
 import { getSupportedEfforts } from "@oh-my-pi/pi-catalog/model-thinking";
 import { calculateCost } from "@oh-my-pi/pi-catalog/models";
 import type {
@@ -1186,22 +1190,25 @@ export function disableChatCompletionsReasoningForDialect(
 }
 
 /**
- * Z.AI/GLM-5.2 reasoning-effort dialect predicate. GLM-5.2 models served on a
+ * Z.AI/GLM reasoning-effort dialect predicate. GLM-5.2+ models served on a
  * Z.AI-format host (thinkingFormat "zai") accept `reasoning_effort`, stream tool
  * calls via `tool_stream`, and clamp output to the model cap. Moonshot Kimi and
  * Xiaomi MiMo also resolve to thinkingFormat "zai" with supportsReasoningEffort
- * true but are NOT GLM-5.2, so the model-id check is load-bearing — never swap it
+ * true but are not GLM, so the model-id check is load-bearing — never swap it
  * for `compat.supportsReasoningEffort`.
  */
 function isZaiReasoningEffortDialect(model: Model<"openai-completions">, compat: ResolvedOpenAICompat): boolean {
-	return compat.thinkingFormat === "zai" && isGlm52ReasoningEffortModelId(model.id);
+	return (
+		compat.thinkingFormat === "zai" &&
+		(isGlm52ReasoningEffortModelId(model.id) || isGlm53ReasoningEffortModelId(model.id))
+	);
 }
 
 /**
  * Provider-specific Chat Completions output clamp.
  *
  * Most OpenAI-compatible endpoints retain the conservative 64k ceiling from
- * {@link resolveOpenAIOutputTokenParam}. Z.AI/GLM-5.2 reasoning and native
+ * {@link resolveOpenAIOutputTokenParam}. Z.AI GLM reasoning and native
  * Moonshot K3 explicitly accept their full advertised model caps, so those
  * routes clamp to `model.maxTokens` instead.
  */
@@ -1233,8 +1240,8 @@ export function resolveOpenAIResponsesOutputClamp(model: Pick<Model, "provider" 
 }
 
 /**
- * Enable `tool_stream` for Z.AI/GLM-5.2 reasoning models when tools are present
- * (GLM-5.2 streams tool-call arguments incrementally and needs the flag to do so).
+ * Enable `tool_stream` for Z.AI GLM reasoning models when tools are present
+ * (GLM coding-plan models stream tool-call arguments incrementally and need the flag).
  */
 export function applyChatCompletionsToolStream(
 	params: OpenAICompletionsParams,

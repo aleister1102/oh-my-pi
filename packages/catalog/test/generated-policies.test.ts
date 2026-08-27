@@ -344,6 +344,37 @@ describe("generated model policies", () => {
 		}
 	});
 
+	it("pins zai glm-5.3-flash to the 1M tier and restores its native image input", () => {
+		const models = [
+			createSpec({
+				id: "glm-5.3-flash",
+				api: "anthropic-messages",
+				provider: "zai",
+				contextWindow: 200_000,
+				maxTokens: 8192,
+			}),
+			createSpec({
+				id: "glm-5.3-flash",
+				api: "openai-completions",
+				provider: "zhipu-coding-plan",
+				contextWindow: 200_000,
+				maxTokens: 8192,
+			}),
+		];
+
+		applyGeneratedModelPolicies(models);
+
+		for (const model of models) {
+			expect(model.contextWindow).toBe(1_000_000);
+			expect(model.maxTokens).toBe(131_072);
+			expect(model.cost).toEqual({ input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 });
+			expect(model.input).toEqual(["text", "image"]);
+			expect(model.thinking?.efforts).toEqual([Effort.Low, Effort.High, Effort.Max]);
+			expect(model.thinking?.requiresEffort).toBe(true);
+			expect(model.thinking?.defaultLevel).toBe(Effort.Max);
+		}
+	});
+
 	it("pins MiniMax-M3 long-context providers to 1M context", () => {
 		const models = [
 			createSpec({

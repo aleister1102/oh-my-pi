@@ -382,13 +382,19 @@ function applyGeneratedModelPolicy(model: ModelSpec<Api>): void {
 
 	// GLM Coding Plan: the selectable 1M-context served ids; pin them so
 	// endpoint discovery or older bundled fallbacks cannot regress to 200k.
-	// GLM-5.3 succeeds GLM-5.2 with the same 1M context window.
+	// GLM-5.3-Flash shares the tier and is natively multimodal despite its
+	// id lacking the `v` marker.
 	if (
 		(model.provider === "zai" || model.provider === "zhipu-coding-plan") &&
-		(model.id === "glm-5.2" || model.id === "glm-5.3")
+		(model.id === "glm-5.2" || model.id === "glm-5.3" || model.id === "glm-5.3-flash")
 	) {
 		model.contextWindow = 1_000_000;
 		model.maxTokens = 131_072;
+		if (model.id === "glm-5.3-flash") {
+			model.reasoning = true;
+			model.input = ["text", "image"];
+			model.cost = { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 };
+		}
 	}
 	// MiniMax-M3: 512K is the standard pricing tier boundary, not the
 	// model ceiling. Pin every long-context provider that serves the model

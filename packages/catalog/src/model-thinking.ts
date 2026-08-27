@@ -361,7 +361,7 @@ function getModelDefinedEfforts<TApi extends Api>(
 		}
 		if (
 			isZaiThinkingFormat(compat) ||
-			isAnthropicMessagesGlm52ReasoningEffortModel(spec) ||
+			isAnthropicMessagesGlmReasoningEffortModel(spec) ||
 			isOllamaCloudGlm52ReasoningEffortModel(spec) ||
 			spec.provider === "baseten"
 		) {
@@ -481,11 +481,11 @@ function isOllamaCloudGlm52ReasoningEffortModel<TApi extends Api>(spec: ModelSpe
 	return spec.api === "ollama-chat" && spec.provider === "ollama-cloud" && isGlm52ReasoningEffortModelId(spec.id);
 }
 
-function isAnthropicMessagesGlm52ReasoningEffortModel<TApi extends Api>(spec: ModelSpec<TApi>): boolean {
+function isAnthropicMessagesGlmReasoningEffortModel<TApi extends Api>(spec: ModelSpec<TApi>): boolean {
 	return (
 		spec.api === "anthropic-messages" &&
 		(spec.provider === "umans" || spec.provider === "zai") &&
-		isGlm52ReasoningEffortModelId(spec.id)
+		(isGlm52ReasoningEffortModelId(spec.id) || isGlm53ReasoningEffortModelId(spec.id))
 	);
 }
 
@@ -748,7 +748,7 @@ function inferThinkingControlMode<TApi extends Api>(
 			if (isMinimaxReasoningModelOnAnthropicEndpoint(spec)) {
 				return "anthropic-adaptive";
 			}
-			if (isAnthropicMessagesGlm52ReasoningEffortModel(spec)) {
+			if (isAnthropicMessagesGlmReasoningEffortModel(spec)) {
 				return "anthropic-budget-effort";
 			}
 			if (parsedModel.family === "anthropic") {

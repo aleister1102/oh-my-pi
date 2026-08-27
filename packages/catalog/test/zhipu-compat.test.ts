@@ -50,6 +50,17 @@ function zhipuGlm52ByProvider(): ModelSpec<"openai-completions"> {
 	};
 }
 
+function zhipuGlm53FlashByProvider(): ModelSpec<"openai-completions"> {
+	return {
+		...baseModel,
+		id: "glm-5.3-flash",
+		name: "GLM-5.3-Flash",
+		input: ["text", "image"],
+		provider: "zhipu-coding-plan",
+		baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4",
+	};
+}
+
 function zhipuGlm52ByOfficialBaseUrl(): ModelSpec<"openai-completions"> {
 	return {
 		...baseModel,
@@ -101,6 +112,14 @@ describe("openai-completions compat — zhipu-coding-plan branch", () => {
 		expect(officialCompat.maxTokensField).toBe("max_tokens");
 	});
 
+	it("enables the uniform GLM-5.3-Flash effort ladder on the Zhipu route", () => {
+		const compat = buildOpenAICompat(zhipuGlm53FlashByProvider());
+
+		expect(compat.thinkingFormat).toBe("zai");
+		expect(compat.supportsReasoningEffort).toBe(true);
+		expect(compat.maxTokensField).toBe("max_tokens");
+	});
+
 	it("lets explicit model.compat overrides win at the resolver layer", () => {
 		const model: ModelSpec<"openai-completions"> = {
 			...zhipuByProvider(),
@@ -135,6 +154,7 @@ describe("openai-completions compat — GLM coding-plan stream idle timeout", ()
 			buildOpenAICompat(glm52("zhipu-coding-plan", "https://open.bigmodel.cn/api/coding/paas/v4"))
 				.streamIdleTimeoutMs,
 		).toBe(600_000);
+		expect(buildOpenAICompat(zhipuGlm53FlashByProvider()).streamIdleTimeoutMs).toBe(600_000);
 		expect(buildOpenAICompat(glm52("opencode-go", "https://opencode.ai/zen/go/v1")).streamIdleTimeoutMs).toBe(
 			600_000,
 		);
@@ -159,9 +179,15 @@ describe("zhipu-coding-plan model discovery", () => {
 		const mockFetch: FetchImpl = Object.assign(
 			async (input: string | Request | URL): Promise<Response> => {
 				requestedUrl = input instanceof Request ? input.url : String(input);
-				return new Response(JSON.stringify({ data: [{ id: "glm-5.1", name: "GLM-5.1" }] }), {
-					headers: { "content-type": "application/json" },
-				});
+				return new Response(
+					JSON.stringify({
+						data: [
+							{ id: "glm-5.1", name: "GLM-5.1" },
+							{ id: "glm-5.3-flash", name: "GLM-5.3-Flash" },
+						],
+					}),
+					{ headers: { "content-type": "application/json" } },
+				);
 			},
 			{ preconnect: fetch.preconnect },
 		);
@@ -174,5 +200,9 @@ describe("zhipu-coding-plan model discovery", () => {
 		expect(requestedUrl).toBe("https://open.bigmodel.cn/api/coding/paas/v4/models");
 		expect(models?.[0]?.id).toBe("glm-5.1");
 		expect(models?.[0]?.baseUrl).toBe("https://open.bigmodel.cn/api/coding/paas/v4");
+		const flash = models?.find(model => model.id === "glm-5.3-flash");
+		expect(flash?.reasoning).toBe(true);
+		expect(flash?.input).toEqual(["text", "image"]);
+		expect(flash?.baseUrl).toBe("https://open.bigmodel.cn/api/coding/paas/v4");
 	});
 });
