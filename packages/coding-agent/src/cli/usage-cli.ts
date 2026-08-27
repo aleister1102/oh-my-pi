@@ -996,19 +996,20 @@ export async function runUsageCommand(cmd: UsageCommandArgs): Promise<void> {
 			return;
 		}
 		const modelRegistry = new ModelRegistry(authStorage);
-		const reports =
-			(await authStorage.fetchUsageReports({
-				baseUrlResolver: provider => modelRegistry.getProviderBaseUrl(provider),
-			})) ?? [];
-		// Reports are always fresh (broker-side fetch) but the account list can
-		// come from a disk-cached snapshot up to an hour old — revalidate so a
-		// just-logged-in (or just-rotated-identity) credential isn't rendered
-		// as a stale duplicate. Best-effort: offline broker keeps the cache.
+		// The account list can come from a disk-cached snapshot up to an hour old —
+		// revalidate so a just-logged-in (or just-rotated-identity) credential isn't
+		// rendered as a stale duplicate. Best-effort: offline broker keeps the cache.
 		try {
 			await authStorage.revalidateCredentials();
 		} catch {
 			// Stale identities beat no output.
 		}
+		// `omp usage` is an explicit live snapshot request, not a cache read.
+		await authStorage.invalidateUsageCache(cmd.provider?.toLowerCase());
+		const reports =
+			(await authStorage.fetchUsageReports({
+				baseUrlResolver: provider => modelRegistry.getProviderBaseUrl(provider),
+			})) ?? [];
 		const storedAccounts = collectStoredAccounts(authStorage);
 		let accounts = selectReportableAccounts(
 			storedAccounts,

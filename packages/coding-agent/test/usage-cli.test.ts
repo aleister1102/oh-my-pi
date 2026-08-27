@@ -331,6 +331,22 @@ describe("formatUsageBreakdown", () => {
 		expect(text).not.toContain("%");
 		expect(text).not.toContain("resets");
 	});
+	it("renders credit quotas with an explicit unit", () => {
+		const creditReport = makeReport("zai", "credits@example.test", [
+			{
+				id: "zai:credits:5h",
+				label: "ZAI 5 Hours Credit Quota",
+				scope: { provider: "zai", windowId: "5h" },
+				window: { id: "5h", label: "5 Hours" },
+				amount: { used: 2000, limit: 2000, unit: "credits", usedFraction: 1 },
+				status: "exhausted",
+			},
+		]);
+		const text = stripVTControlCharacters(formatUsageBreakdown([creditReport], [], Date.now()));
+		expect(text).toContain("2K / 2K credits");
+		expect(text).not.toContain("2Kundefined");
+	});
+
 	it("renders every account: reported ones with limits, credential-only ones as no-data rows", () => {
 		const text = stripVTControlCharacters(formatUsageBreakdown(reports, accounts, Date.now()));
 		expect(text).toContain("dummy.primary@example.test");
