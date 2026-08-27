@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `omp usage` capacity stats to report Codex chat and Spark meters separately when they share a window duration.
+
 ## [18.0.6] - 2026-08-26
 
 ### Added
