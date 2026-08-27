@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- LaTeX `\textbf`, `\textit`, `\textsl`, and `\emph` now render terminal bold and italic attributes; unsupported text-font fallbacks such as `\texttt` and `\textsf` remain plain text.
+
 ## [18.0.6] - 2026-08-26
 
 ### Added
