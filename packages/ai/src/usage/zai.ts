@@ -194,7 +194,10 @@ function buildModelUsageUrl(baseUrl: string, now: Date): string {
 
 function getZaiCredentialLimits(report: UsageReport): UsageLimit[] {
 	const limits = report.limits.filter(
-		limit => limit.id.startsWith("zai:requests:") || limit.id.startsWith("zai:tokens:"),
+		limit =>
+			limit.id.startsWith("zai:requests:") ||
+			limit.id.startsWith("zai:tokens:") ||
+			limit.id.startsWith("zai:credits:"),
 	);
 	return limits;
 }
@@ -260,18 +263,19 @@ async function fetchZaiUsage(params: UsageFetchParams, ctx: UsageFetchContext): 
 	for (const rawLimit of limitsPayload) {
 		const parsed = parseLimitItem(rawLimit);
 		if (!parsed) continue;
-		if (parsed.type === "TOKENS_LIMIT") {
+		if (parsed.type === "TOKENS_LIMIT" || parsed.type === "CREDIT_LIMIT") {
+			const isCreditLimit = parsed.type === "CREDIT_LIMIT";
 			const amount = buildUsageAmount({
 				used: parsed.currentValue,
 				limit: parsed.usage,
 				remaining: parsed.remaining,
 				percentage: parsed.percentage,
-				unit: "tokens",
+				unit: isCreditLimit ? "credits" : "tokens",
 			});
 			const window = buildZaiWindow(parsed);
 			limits.push({
-				id: `zai:tokens:${window.id}`,
-				label: `ZAI ${window.label} Token Quota`,
+				id: `zai:${isCreditLimit ? "credits" : "tokens"}:${window.id}`,
+				label: `ZAI ${window.label} ${isCreditLimit ? "Credit" : "Token"} Quota`,
 				scope: {
 					provider: params.provider,
 					windowId: window.id,

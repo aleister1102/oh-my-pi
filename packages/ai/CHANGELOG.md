@@ -6,6 +6,7 @@
 
 - Fixed Codex OAuth selection to keep chat and Spark quotas independent, preserve legacy shared blocks from older brokers, and avoid treating incomplete usage reports as uncapped.
 - Fixed Zhipu Coding Plan `glm-5.3-flash` requests to preserve the 131,072-token output cap and enable tool streaming.
+- Fixed Z.AI usage reports for credit-based Coding Plans so `CREDIT_LIMIT` quota windows appear in usage data and credential ranking.
 
 ## [18.0.6] - 2026-08-26
 

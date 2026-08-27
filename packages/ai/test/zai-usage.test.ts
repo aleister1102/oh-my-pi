@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import type { FetchImpl } from "@oh-my-pi/pi-ai/types";
 import type { UsageFetchContext, UsageFetchParams } from "@oh-my-pi/pi-ai/usage";
-import { zaiUsageProvider } from "@oh-my-pi/pi-ai/usage/zai";
+import { zaiRankingStrategy, zaiUsageProvider } from "@oh-my-pi/pi-ai/usage/zai";
 
 function makeCredential(): UsageFetchParams["credential"] {
 	return {
@@ -103,6 +103,50 @@ describe("zai usage provider", () => {
 			5 * 60 * 60 * 1000,
 			7 * 24 * 60 * 60 * 1000,
 		]);
+	});
+
+	it("reports current Z.AI credit-plan quota rows", async () => {
+		const report = await zaiUsageProvider.fetchUsage!(
+			{ provider: "zai", credential: makeCredential(), signal: undefined },
+			makeCtx({
+				success: true,
+				data: {
+					limits: [
+						{
+							type: "CREDIT_LIMIT",
+							usage: 2000,
+							currentValue: 2000,
+							percentage: 100,
+							remaining: 0,
+							nextResetTime: 1787816962823,
+							unit: 3,
+							number: 5,
+						},
+						{
+							type: "CREDIT_LIMIT",
+							usage: 10000,
+							currentValue: 4200,
+							percentage: 42,
+							remaining: 5800,
+							nextResetTime: 1787934509983,
+							unit: 6,
+							number: 7,
+						},
+					],
+				},
+			}),
+		);
+
+		expect(report).not.toBeNull();
+		expect(report!.limits.map(limit => limit.id)).toEqual(["zai:credits:5h", "zai:credits:1w"]);
+		expect(report!.limits.map(limit => limit.label)).toEqual(["ZAI 5 Hours Credit Quota", "ZAI Weekly Credit Quota"]);
+		expect(report!.limits.map(limit => limit.amount.unit)).toEqual(["credits", "credits"]);
+		expect(report!.limits.map(limit => limit.amount.used)).toEqual([2000, 4200]);
+		expect(report!.limits.map(limit => limit.amount.limit)).toEqual([2000, 10000]);
+
+		const windows = zaiRankingStrategy.findWindowLimits(report!);
+		expect(windows.primary?.id).toBe("zai:credits:5h");
+		expect(windows.secondary?.id).toBe("zai:credits:1w");
 	});
 
 	it("supports both api-key and oauth credentials, rejecting oauth rows with no access token", () => {
