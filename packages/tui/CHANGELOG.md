@@ -6,6 +6,9 @@
 
 - Enabled macOS spelling assistance (typo undercurls, Tab completions, on-space autocorrect) in the hook and ask answer editor (`HookEditorComponent`), following the `spelling.*` settings ([#12517](https://github.com/can1357/oh-my-pi/pull/12517) by [@aleister1102](https://github.com/aleister1102))
 - Skill prompt cards show a chip and line count for every skill loaded by a multi-skill prompt (`/skill:foo /skill:bar`); single-skill cards look as before ([#12535](https://github.com/can1357/oh-my-pi/pull/12535) by [@aleister1102](https://github.com/aleister1102))
+### Fixed
+
+- Fixed LaTeX math losing its enclosing styles inside nested wrappers: `\textnormal` resets only bold and italic, a display radical's degree keeps the caller's style and color, optional arguments such as `\xrightarrow[n]{…}` keep the active color, and fallback script markers keep the caller's style across nested colors; sized headings no longer carry the ANSI codes of their inline math into the plain heading text ([#18275](https://github.com/can1357/oh-my-pi/pull/18275) by [@aleister1102](https://github.com/aleister1102))
 
 ## [18.17.0] - 2026-11-06
 
