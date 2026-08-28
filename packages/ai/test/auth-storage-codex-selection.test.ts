@@ -443,20 +443,20 @@ describe("AuthStorage codex oauth ranking", () => {
 			"acct-chat",
 			createCodexUsageReport({
 				accountId: "acct-chat",
-				primary: { usedFraction: 0.8, resetInMs: HOUR_MS },
-				secondary: { usedFraction: 0.8, resetInMs: WEEK_MS },
+				primary: { usedFraction: 0.5, resetInMs: HOUR_MS },
+				secondary: { usedFraction: 0.9, resetInMs: WEEK_MS },
 			}),
 		);
 		const sparkOnlyReport = addSparkUsage(
 			createCodexUsageReport({
 				accountId: "acct-spark",
 				primary: { usedFraction: 0.1, resetInMs: HOUR_MS },
-				secondary: { usedFraction: 0.1, resetInMs: WEEK_MS },
+				secondary: { usedFraction: 0.9, resetInMs: WEEK_MS },
 			}),
 			0.1,
-			0.1,
+			0.9,
 		);
-		sparkOnlyReport.limits = sparkOnlyReport.limits.filter(limit => limit.id.includes(":spark:"));
+		sparkOnlyReport.limits = sparkOnlyReport.limits.filter(limit => limit.id === "openai-codex:spark:secondary");
 		usageByAccount.set("acct-spark", sparkOnlyReport);
 		const otherMeterReport = addSparkUsage(
 			createCodexUsageReport({
@@ -464,16 +464,15 @@ describe("AuthStorage codex oauth ranking", () => {
 				primary: { usedFraction: 0.9, resetInMs: HOUR_MS },
 				secondary: { usedFraction: 0.9, resetInMs: WEEK_MS },
 			}),
-			0.9,
-			0.9,
+			0.5,
+			0.1,
 		);
-		otherMeterReport.limits = otherMeterReport.limits.filter(limit => limit.id.includes(":spark:"));
 		usageByAccount.set("acct-chat-only", otherMeterReport);
 
 		const chatCounts = await countApiKeySelections(authStorage, "openai-codex", "incomplete-chat");
 		expectExclusivePreference(chatCounts, "api-acct-chat", "api-acct-status");
-		expect(countFor(chatCounts, "api-acct-spark")).toBe(0);
 		expect(countFor(chatCounts, "api-acct-chat-only")).toBe(0);
+		expect(countFor(chatCounts, "api-acct-spark")).toBe(0);
 
 		const sparkCounts = await countApiKeySelections(
 			authStorage,
@@ -482,7 +481,7 @@ describe("AuthStorage codex oauth ranking", () => {
 			150,
 			"gpt-5.3-codex-spark",
 		);
-		expectExclusivePreference(sparkCounts, "api-acct-spark", "api-acct-chat-only");
+		expectExclusivePreference(sparkCounts, "api-acct-chat-only", "api-acct-spark");
 	});
 
 	test("does not treat a secondary-only Spark report as an uncapped primary meter", async () => {
