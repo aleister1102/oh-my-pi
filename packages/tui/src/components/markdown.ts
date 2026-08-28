@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from "node:util";
 import { LRUCache } from "@oh-my-pi/pi-utils/lru";
 import {
 	Lexer,
@@ -2844,7 +2845,7 @@ export class Markdown implements Component {
 				const headingLevel = token.depth;
 				const headingPrefix = `${"#".repeat(headingLevel)} `;
 				const headingText = this.#renderInlineTokens(token.tokens || [], styleContext);
-				const headingPlainText = plainInlineTokens(token.tokens || []);
+				const headingPlainText = stripVTControlCharacters(plainInlineTokens(token.tokens || []));
 				let styledHeading: string;
 				if (headingLevel === 1 && TERMINAL.textSizing) {
 					const plainWidth = visibleWidth(headingPlainText);
