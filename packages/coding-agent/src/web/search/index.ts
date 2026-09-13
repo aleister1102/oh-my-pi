@@ -45,6 +45,7 @@ import { cfgProvidersAntigravityEndpoint, cfgProvidersWebSearchTimeoutSeconds } 
 /** Web search tool parameters schema */
 export const webSearchSchema = type({
 	query: "string",
+	model: "string?",
 	recency: "'day' | 'week' | 'month' | 'year'?",
 	limit: "number?",
 	max_tokens: "number?",
@@ -54,9 +55,7 @@ export const webSearchSchema = type({
 
 export type SearchToolParams = typeof webSearchSchema.infer;
 
-export interface SearchQueryParams extends SearchToolParams {
-	model?: string;
-}
+export type SearchQueryParams = SearchToolParams;
 
 /** Format response for LLM consumption. `notes` lead the output (e.g. relaxed-constraint warnings). */
 function formatForLLM(response: SearchResponse, notes: readonly string[] = []): string {

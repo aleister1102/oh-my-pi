@@ -5,3 +5,4 @@ X posts/reactions → site:x.com, site:x.com/<handle>, or from:<handle>; -from:<
 {{/if}}
 Hacker News stories/comments → site:news.ycombinator.com.
 Prefer primary sources; MUST link citations.
+Optional `model`: per-query search selector, e.g. `web/exa`; omit it to use the configured `web` role chain.
