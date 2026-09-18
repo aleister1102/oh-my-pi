@@ -13,6 +13,7 @@ import { Highlighter, type HighlightedLine } from "@oh-my-pi/pi-tui/text/highlig
 import { languageFromPath } from "@oh-my-pi/pi-tui/text/lang";
 import type { DiffDocument, HunkBlock } from "../../../cli/git-tui/model/diff-pane";
 import type { FileAssetSide, FileStreamUpdate } from "../../../cli/git-tui/model/state";
+import { type WrapSpan, wrapDiffLine } from "./diff-wrap";
 import { type DiffRow, displayLine } from "./document";
 
 /** How the pane presents the document. */
@@ -29,15 +30,21 @@ export type PaneClick = { type: "hunk-action"; hunk: HunkBlock; action: HunkActi
 
 /** One drawn row of the current layout. */
 export type Visual =
-	| { readonly t: "split"; readonly row: DiffRow; readonly seg: number; readonly rowIndex: number }
+	| {
+			readonly t: "split";
+			readonly row: DiffRow;
+			readonly oldSpan?: WrapSpan;
+			readonly newSpan?: WrapSpan;
+			readonly rowIndex: number;
+	  }
 	| {
 			readonly t: "line";
 			readonly row: DiffRow;
 			readonly side: "old" | "new" | "both";
-			readonly seg: number;
+			readonly span?: WrapSpan;
 			readonly rowIndex: number;
 	  }
-	| { readonly t: "file"; readonly index: number; readonly seg: number; readonly rowIndex: number }
+	| { readonly t: "file"; readonly index: number; readonly span?: WrapSpan; readonly rowIndex: number }
 	| { readonly t: "header"; readonly hunk: number }
 	| { readonly t: "blank" };
 
@@ -387,27 +394,28 @@ export class DiffPaneModel {
 		const key = `${this.#docVersion}\u0000${mode}\u0000${wrap}\u0000${width}`;
 		if (this.#layoutCache?.key === key) return this.#layoutCache.visuals;
 		const visuals: Visual[] = [];
-		const segments = (textWidth: number, ...widths: number[]): number =>
-			wrap ? Math.max(1, Math.ceil(Math.max(...widths, 1) / textWidth)) : 1;
+		const spans = (text: string, textWidth: number): (WrapSpan | undefined)[] =>
+			wrap ? wrapDiffLine(text, textWidth) : [undefined];
 		const lines = (row: DiffRow, rowIndex: number, textWidth: number): void => {
 			if (row.kind === "change") {
-				for (let seg = 0; seg < segments(textWidth, row.oldWidth); seg++)
-					visuals.push({ t: "line", row, side: "old", seg, rowIndex });
-				for (let seg = 0; seg < segments(textWidth, row.newWidth); seg++)
-					visuals.push({ t: "line", row, side: "new", seg, rowIndex });
+				for (const span of spans(row.oldText, textWidth))
+					visuals.push({ t: "line", row, side: "old", span, rowIndex });
+				for (const span of spans(row.newText, textWidth))
+					visuals.push({ t: "line", row, side: "new", span, rowIndex });
 				return;
 			}
 			const side = row.kind === "del" ? "old" : row.kind === "add" ? "new" : "both";
-			const rowWidth = side === "old" ? row.oldWidth : row.newWidth;
-			for (let seg = 0; seg < segments(textWidth, rowWidth); seg++)
-				visuals.push({ t: "line", row, side, seg, rowIndex });
+			for (const span of spans(side === "old" ? row.oldText : row.newText, textWidth))
+				visuals.push({ t: "line", row, side, span, rowIndex });
 		};
 		switch (mode) {
 			case "split": {
 				const textWidth = this.splitTextWidth(width);
 				doc.rows.forEach((row, rowIndex) => {
-					for (let seg = 0; seg < segments(textWidth, row.oldWidth, row.newWidth); seg++)
-						visuals.push({ t: "split", row, seg, rowIndex });
+					const old = spans(row.oldText, textWidth);
+					const next = spans(row.newText, textWidth);
+					for (let i = 0; i < Math.max(old.length, next.length); i++)
+						visuals.push({ t: "split", row, oldSpan: old[i], newSpan: next[i], rowIndex });
 				});
 				break;
 			}
@@ -429,8 +437,7 @@ export class DiffPaneModel {
 				const textWidth = this.fileTextWidth(width);
 				doc.fileLines.forEach((line, index) => {
 					const rowIndex = doc.rowIndexByNewLine[index + 1] ?? -1;
-					for (let seg = 0; seg < segments(textWidth, line.width); seg++)
-						visuals.push({ t: "file", index, seg, rowIndex });
+					for (const span of spans(line.text, textWidth)) visuals.push({ t: "file", index, span, rowIndex });
 				});
 				break;
 			}

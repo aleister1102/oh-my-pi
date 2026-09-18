@@ -24,6 +24,7 @@ import {
 	type VisualKind,
 	visualKind,
 } from "../../../apps/git/diff-pane-model";
+import type { WrapSpan } from "../../../apps/git/diff-wrap";
 import type { DiffRow } from "../../../apps/git/document";
 import { bgHex, canvasHex, fgHex, pill, selectionBg, withBg } from "./colors";
 
@@ -91,6 +92,16 @@ function window(text: string, start: number, width: number): string {
 	return `${slice.text}${spaces(width - slice.width)}`;
 }
 
+function spanWindow(text: string, span: WrapSpan | undefined, width: number): string {
+	if (!span) return spaces(width);
+	const slice = sliceCells(text, span.start, span.end - span.start, false);
+	return `${slice.text}${spaces(width - slice.width)}`;
+}
+
+function visibleSpan(model: DiffPaneModel, span: WrapSpan | undefined, width: number): WrapSpan | undefined {
+	return model.wrap ? span : { start: model.scrollLeft, end: model.scrollLeft + width };
+}
+
 function messageRows(theme: Theme, message: string, width: number, height: number): string[] {
 	return Array.from({ length: height }, (_, row) =>
 		row === Math.floor(height / 2)
@@ -115,9 +126,8 @@ function marked(
 	textWidth: number,
 	soft: string,
 	strong: string,
-	start: number,
+	{ start, end }: WrapSpan,
 ): string {
-	const end = start + textWidth;
 	let at = start;
 	let out = "";
 	let used = 0;
@@ -146,12 +156,12 @@ function changedBody(
 	textWidth: number,
 	soft: string,
 	strong: string,
-	start: number,
+	span: WrapSpan | undefined,
 ): string {
 	const inner =
-		emphasize && marks && marks.length > 0
-			? marked(text, marks, textWidth, soft, strong, start)
-			: window(text, start, textWidth);
+		emphasize && marks && marks.length > 0 && span
+			? marked(text, marks, textWidth, soft, strong, span)
+			: spanWindow(text, span, textWidth);
 	return `${withBg(` ${inner} `, soft)}${RESET}`;
 }
 
@@ -163,7 +173,7 @@ function splitSide(
 	side: "old" | "new",
 	gutter: number,
 	textWidth: number,
-	start: number,
+	span: WrapSpan | undefined,
 	first: boolean,
 ): string {
 	const num = side === "old" ? row.oldNum : row.newNum;
@@ -181,10 +191,10 @@ function splitSide(
 		return `${label}${tinted ? `${side === "old" ? colors.fillDel : colors.fillAdd}${fill}${RESET}` : fill}`;
 	}
 	const text = shownText(model, theme, row, side);
-	if (!changed) return `${label} ${window(text, start, textWidth)} `;
+	if (!changed) return `${label} ${spanWindow(text, span, textWidth)} `;
 	const soft = side === "old" ? colors.delSoft : colors.addSoft;
 	const strong = side === "old" ? colors.delStrong : colors.addStrong;
-	return `${label}${changedBody(text, side === "old" ? row.oldMarks : row.newMarks, true, textWidth, soft, strong, start)}`;
+	return `${label}${changedBody(text, side === "old" ? row.oldMarks : row.newMarks, true, textWidth, soft, strong, span)}`;
 }
 
 function stackedLine(
@@ -195,11 +205,11 @@ function stackedLine(
 	visual: Extract<Visual, { t: "line" }>,
 	width: number,
 ): string {
-	const { row, side, seg } = visual;
+	const { row, side } = visual;
 	const gutter = doc.gutterWidth;
 	const textWidth = model.lineTextWidth(width);
-	const start = model.wrap ? seg * textWidth : model.scrollLeft;
-	const first = seg === 0;
+	const span = visibleSpan(model, visual.span, textWidth);
+	const first = span?.start === 0 || !model.wrap;
 	const oldLabel =
 		first && row.oldNum !== undefined && side !== "new" ? String(row.oldNum).padStart(gutter) : spaces(gutter);
 	const newLabel =
@@ -212,11 +222,11 @@ function stackedLine(
 			? `${spaces(gutter)}${fgHex(colors.mapAdd)}${newLabel}${RESET} `
 			: theme.fg("dim", `${oldLabel}${newLabel} `);
 	const text = shownText(model, theme, row, side);
-	if (!isDel && !isAdd) return `${label} ${window(text, start, textWidth)} `;
+	if (!isDel && !isAdd) return `${label} ${spanWindow(text, span, textWidth)} `;
 	const soft = isDel ? colors.delSoft : colors.addSoft;
 	const strong = isDel ? colors.delStrong : colors.addStrong;
 	const marks = side === "old" ? row.oldMarks : row.newMarks;
-	return `${label}${changedBody(text, marks, row.kind === "change", textWidth, soft, strong, start)}`;
+	return `${label}${changedBody(text, marks, row.kind === "change", textWidth, soft, strong, span)}`;
 }
 
 function hunkHeader(
@@ -274,10 +284,30 @@ function visualText(
 			return hunkHeader(model, theme, doc, visual.hunk, width, screenRow);
 		case "split": {
 			const textWidth = model.splitTextWidth(width);
-			const start = model.wrap ? visual.seg * textWidth : model.scrollLeft;
-			const first = visual.seg === 0;
-			const left = splitSide(model, theme, colors, visual.row, "old", doc.gutterWidth, textWidth, start, first);
-			const right = splitSide(model, theme, colors, visual.row, "new", doc.gutterWidth, textWidth, start, first);
+			const old = visibleSpan(model, visual.oldSpan, textWidth);
+			const next = visibleSpan(model, visual.newSpan, textWidth);
+			const left = splitSide(
+				model,
+				theme,
+				colors,
+				visual.row,
+				"old",
+				doc.gutterWidth,
+				textWidth,
+				old,
+				!model.wrap || old?.start === 0,
+			);
+			const right = splitSide(
+				model,
+				theme,
+				colors,
+				visual.row,
+				"new",
+				doc.gutterWidth,
+				textWidth,
+				next,
+				!model.wrap || next?.start === 0,
+			);
 			return `${left}${theme.fg("borderMuted", "│")}${right}`;
 		}
 		case "line":
@@ -285,11 +315,12 @@ function visualText(
 		case "file": {
 			const gutter = doc.gutterWidth;
 			const textWidth = model.fileTextWidth(width);
-			const start = model.wrap ? visual.seg * textWidth : model.scrollLeft;
+			const span = visibleSpan(model, visual.span, textWidth);
 			const spans = model.highlights?.new[visual.index];
 			const text = spans ? renderSpans(spans, theme) : (doc.fileLines[visual.index]?.text ?? "");
-			const label = visual.seg === 0 ? theme.fg("dim", String(visual.index + 1).padStart(gutter)) : spaces(gutter);
-			return `${label} ${window(text, start, textWidth)}`;
+			const first = !model.wrap || span?.start === 0;
+			const label = first ? theme.fg("dim", String(visual.index + 1).padStart(gutter)) : spaces(gutter);
+			return `${label} ${spanWindow(text, span, textWidth)}`;
 		}
 	}
 }
