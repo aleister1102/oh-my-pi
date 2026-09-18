@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed the Git TUI's word wrap splitting words across rows: wrapped rows now break at word and separator boundaries, and a break that would strand a wide gap fills the row instead.
+
 ## [18.2.5] - 2026-09-17
 
 ### Added
