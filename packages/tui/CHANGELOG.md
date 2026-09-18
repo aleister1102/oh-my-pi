@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed macOS autocorrect rewriting a word the spellchecker accepts (`artifacts` → `artefacts` on a Mac whose preferred English is British): autocorrect now judges the whole draft, the same text the typo undercurls use, instead of the current line alone.
+
 ## [18.2.5] - 2026-09-17
 
 ### Added
