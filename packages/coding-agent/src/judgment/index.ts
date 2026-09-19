@@ -96,6 +96,8 @@ export function resolveJudge(deps: JudgeDeps): ResolvedJudge {
 	const fallback = new OnlineChatJudge(deps);
 	const typesafe = new TypeSafeJudge({
 		apiKey: deps.registry.authStorage.resolver(TYPESAFE_PROVIDER, { sessionId: deps.sessionId }),
+		baseUrl: deps.settings.get("providers.judgmentBaseUrl")?.trim() || undefined,
+		model: deps.settings.get("providers.judgmentModel")?.trim() || undefined,
 	});
 	return {
 		kind: "typesafe",

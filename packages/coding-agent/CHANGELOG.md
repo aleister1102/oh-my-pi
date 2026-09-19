@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `providers.judgmentBaseUrl` and `providers.judgmentModel` settings to point typed judgments (Jev) at an alternate TypeSafe-compatible endpoint and model instead of the env-only override.
+
 ## [18.2.6] - 2026-09-18
 
 ### Fixed

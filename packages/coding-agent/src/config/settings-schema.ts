@@ -5657,6 +5657,27 @@ export const SETTINGS_SCHEMA = {
 			],
 		},
 	},
+	"providers.judgmentBaseUrl": {
+		type: "string",
+		default: undefined,
+		ui: {
+			tab: "providers",
+			group: "Tiny Model",
+			label: "Judgment Base URL",
+			description:
+				"Overrides the TypeSafe API root for typed judgments (default https://api.typesafe.ai) for alternate TypeSafe-compatible deployments",
+		},
+	},
+	"providers.judgmentModel": {
+		type: "string",
+		default: undefined,
+		ui: {
+			tab: "providers",
+			group: "Tiny Model",
+			label: "Judgment Model",
+			description: "Overrides the TypeSafe judgment model (default jev-latest)",
+		},
+	},
 	"providers.tinyModel": {
 		type: "enum",
 		values: TINY_TITLE_MODEL_VALUES,

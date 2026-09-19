@@ -24,8 +24,13 @@ const SMOL: Model<Api> = {
 	maxTokens: 4096,
 } as Model<Api>;
 
-function makeSession(opts: { typesafe?: boolean } = {}): ToolSession {
-	const settings = Settings.isolated({ "async.enabled": false, "task.isolation.enabled": false });
+function makeSession(opts: { typesafe?: boolean; judgmentBaseUrl?: string; judgmentModel?: string } = {}): ToolSession {
+	const settings = Settings.isolated({
+		"async.enabled": false,
+		"task.isolation.enabled": false,
+		...(opts.judgmentBaseUrl ? { "providers.judgmentBaseUrl": opts.judgmentBaseUrl } : {}),
+		...(opts.judgmentModel ? { "providers.judgmentModel": opts.judgmentModel } : {}),
+	});
 	settings.setModelRole("smol", "p/smol");
 	const modelRegistry = {
 		authStorage: {
@@ -152,6 +157,32 @@ describe("eval judge() bridge", () => {
 		expect(body?.state).toEqual(["add tests"]);
 		expect(body?.questions).toEqual({ tests: { type: "noul", instructions: QUESTIONS.tests.instructions } });
 		expect(chat).not.toHaveBeenCalled();
+	});
+
+	it("honors judgment base URL and model overrides from settings", async () => {
+		let url: string | undefined;
+		let body: { state: unknown; model: unknown; questions: unknown } | undefined;
+		vi.spyOn(globalThis, "fetch").mockImplementation(
+			asGlobalFetch(async (request, init) => {
+				url = String(request);
+				body = JSON.parse(String(init?.body));
+				return Response.json({
+					model: "custom-jev",
+					answers: { tests: { type: "noul", noul: 0.5 } },
+					usage: { input_tokens: 4, output_tokens: 1 },
+				});
+			}),
+		);
+		const snapshot = await judgeAndWait(
+			{ state: ["add tests"], questions: { tests: QUESTIONS.tests } },
+			makeSession({ typesafe: true, judgmentBaseUrl: "https://judgment-proxy.test", judgmentModel: "custom-jev" }),
+		);
+
+		expect(snapshot.status).toBe("completed");
+		expect(snapshot.data).toEqual({ tests: { type: "bool", bool: 0.5 } });
+		expect(url?.startsWith("https://judgment-proxy.test/v1/systemone")).toBe(true);
+		expect(body?.model).toBe("custom-jev");
+		expect(body?.questions).toEqual({ tests: { type: "noul", instructions: QUESTIONS.tests.instructions } });
 	});
 
 	it("fails the handle when the chat model answers off-format", async () => {
