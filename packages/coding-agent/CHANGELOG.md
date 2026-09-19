@@ -3,9 +3,6 @@
 ## [Unreleased]
 
 ## [18.2.6] - 2026-09-18
-### Added
-
-- Enabled macOS spelling assistance (typo undercurls, autocomplete, autocorrect) in the hook and ask answer editor.
 
 ### Fixed
 
