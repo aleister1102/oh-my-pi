@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed the Git TUI's hunk stage, unstage, and discard failing with `patch does not apply: patch has no diff --git header`; generated hunk and line-selection patches now carry the git-format header the applier requires.
+
 ## [18.2.5] - 2026-09-17
 
 ### Added
