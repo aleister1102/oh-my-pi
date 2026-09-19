@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ## [18.2.6] - 2026-09-18
+### Added
+
+- Supported invoking multiple skills in a single prompt submission (`/skill:foo /skill:bar`).
 
 ### Fixed
 
