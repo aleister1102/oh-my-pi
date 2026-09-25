@@ -55,7 +55,7 @@ import {
 } from "../../extensibility/extensions";
 import { runExtensionCompact } from "../../extensibility/extensions/compact-handler";
 import { getSessionSlashCommands } from "../../extensibility/extensions/get-commands-handler";
-import { parseSkillInvocation } from "../../extensibility/skills";
+import { buildSkillPromptMessage, parseSkillInvocation } from "../../extensibility/skills";
 import { PYTHON_KERNEL_CANCEL_BUDGET_MS } from "../../eval/py/kernel";
 import { MCPManager } from "../../mcp/manager";
 import { reconnectMcpManagerServer } from "../../mcp/oauth-reauth";
@@ -747,16 +747,16 @@ export function createAcpExtensionUiContext(
 		notify: (message, type) => {
 			logger.debug("ACP extension notification", { message, type });
 		},
-		onTerminalInput: () => () => {},
-		setStatus: () => {},
-		setWorkingMessage: () => {},
-		setWidget: () => {},
-		setFooter: () => {},
-		setHeader: () => {},
-		setTitle: () => {},
+		onTerminalInput: () => () => { },
+		setStatus: () => { },
+		setWorkingMessage: () => { },
+		setWidget: () => { },
+		setFooter: () => { },
+		setHeader: () => { },
+		setTitle: () => { },
 		custom: async () => undefined as never,
-		pasteToEditor: () => {},
-		setEditorText: () => {},
+		pasteToEditor: () => { },
+		setEditorText: () => { },
 		getEditorText: () => "",
 		editor: async (title, prefill, dialogOptions) => {
 			if (!supportsForm) return undefined;
@@ -770,8 +770,8 @@ export function createAcpExtensionUiContext(
 			);
 			return typeof value === "string" ? value : undefined;
 		},
-		addAutocompleteProvider: () => {},
-		setEditorComponent: () => {},
+		addAutocompleteProvider: () => { },
+		setEditorComponent: () => { },
 		getEditorComponent: () => undefined,
 		get theme() {
 			return theme;
@@ -780,7 +780,7 @@ export function createAcpExtensionUiContext(
 		getTheme: async () => undefined,
 		setTheme: async () => ({ success: false, error: "Theme changes are unavailable in ACP mode" }),
 		getToolsExpanded: () => false,
-		setToolsExpanded: () => {},
+		setToolsExpanded: () => { },
 	};
 }
 
@@ -1099,9 +1099,9 @@ export class AcpAgent implements Agent {
 						undefined,
 						error instanceof AgentBusyError
 							? RequestError.sessionBusy(error.message, {
-									reason: "session_busy",
-									hint: "steer|followUp|wait",
-								})
+								reason: "session_busy",
+								hint: "steer|followUp|wait",
+							})
 							: error,
 					);
 				});
@@ -1270,7 +1270,7 @@ export class AcpAgent implements Agent {
 				stopReason: "end_turn",
 				usage: this.#buildTurnUsage(
 					promptTurn?.usageBaseline ??
-						this.#cloneUsageStatistics(record.session.sessionManager.getUsageStatistics()),
+					this.#cloneUsageStatistics(record.session.sessionManager.getUsageStatistics()),
 					record.session.sessionManager.getUsageStatistics(),
 				),
 			});
@@ -1295,15 +1295,18 @@ export class AcpAgent implements Agent {
 		if (!record.session.skillsSettings?.enableSkillCommands) {
 			return false;
 		}
-		const parsed = parseSkillInvocation(text);
+		const parsed = parseSkillInvocation(text, name => record.session.skills.some(s => s.name === name));
 		if (!parsed) {
 			return false;
 		}
-		const skill = record.session.skills.find(candidate => candidate.name === parsed.name);
-		if (!skill) {
+		const skills = parsed.names.flatMap(name => {
+			const s = record.session.skills.find(c => c.name === name);
+			return s ? [s] : [];
+		});
+		if (skills.length === 0) {
 			return false;
 		}
-		const built = await record.session.buildUserSkillPrompt(skill, parsed);
+		const built = await buildSkillPromptMessage(skills, parsed, "user");
 		await record.session.promptCustomMessage(
 			{
 				customType: SKILL_PROMPT_MESSAGE_TYPE,
@@ -1570,7 +1573,7 @@ export class AcpAgent implements Agent {
 		return { outcome: "injected", queue };
 	}
 
-	async extNotification(_method: string, _params: { [key: string]: unknown }): Promise<void> {}
+	async extNotification(_method: string, _params: { [key: string]: unknown }): Promise<void> { }
 
 	get signal(): AbortSignal {
 		return this.#connection.signal;
@@ -3014,7 +3017,7 @@ export class AcpAgent implements Agent {
 					void record.session.abort({ reason: USER_INTERRUPT_LABEL });
 				},
 				hasPendingMessages: () => record.session.queuedMessageCount > 0,
-				shutdown: () => {},
+				shutdown: () => { },
 				getContextUsage: () => record.session.getContextUsage(),
 				getSystemPrompt: () => record.session.systemPrompt,
 				runEphemeralTurn: args => record.session.runEphemeralTurn(args),
@@ -3098,7 +3101,7 @@ export class AcpAgent implements Agent {
 		};
 		manager.setOnToolsChanged(() => {
 			// Failures are logged once via the stored chain's catch above.
-			enqueueMcpToolsRefresh().catch(() => {});
+			enqueueMcpToolsRefresh().catch(() => { });
 		});
 		const configs: MCPConfigMap = {};
 		const sources: MCPSourceMap = {};

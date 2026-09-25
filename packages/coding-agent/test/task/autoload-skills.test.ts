@@ -42,7 +42,7 @@ function createMockSession(
 		model: undefined,
 		extensionRunner: undefined,
 		sessionManager: {
-			appendSessionInit: () => {},
+			appendSessionInit: () => { },
 		},
 		getActiveToolNames: () => ["read", "yield"],
 		getEnabledToolNames: () => ["read", "yield"],
@@ -58,7 +58,7 @@ function createMockSession(
 			onPrompt({ text, options, promptIndex, emit });
 			return true;
 		},
-		sendCustomMessage: vi.fn(async () => {}),
+		sendCustomMessage: vi.fn(async () => { }),
 		getLastAssistantMessage: () => state.messages[state.messages.length - 1],
 	} as unknown as AgentSession;
 }
@@ -68,7 +68,7 @@ function createSessionResult(session: AgentSession): CreateAgentSessionResult {
 		session,
 		extensionsResult:
 			{} as unknown as import("@oh-my-pi/pi-coding-agent/extensibility/extensions/types").LoadExtensionsResult,
-		setToolUIContext: () => {},
+		setToolUIContext: () => { },
 		eventBus: new EventBus(),
 	};
 }
@@ -95,7 +95,7 @@ describe("autoloadSkills in executor", () => {
 		id: "subagent-1",
 		settings: Settings.isolated(),
 		modelRegistry: {
-			refresh: async () => {},
+			refresh: async () => { },
 		} as unknown as import("@oh-my-pi/pi-coding-agent/config/model-registry").ModelRegistry,
 		enableLsp: false,
 	};
@@ -133,15 +133,18 @@ describe("autoloadSkills in executor", () => {
 			},
 		];
 
-		vi.spyOn(skillsModule, "buildSkillPromptMessage").mockImplementation(async skill => ({
-			message: `Content of ${skill.name}\n\n---\n\nSkill: ${skill.filePath}`,
-			details: {
-				name: skill.name,
-				path: skill.filePath,
-				args: undefined,
-				lineCount: 1,
-			},
-		}));
+		vi.spyOn(skillsModule, "buildSkillPromptMessage").mockImplementation(async skillOrSkills => {
+			const skill = Array.isArray(skillOrSkills) ? skillOrSkills[0] : skillOrSkills;
+			return {
+				message: `Content of ${skill.name}\n\n---\n\nSkill: ${skill.filePath}`,
+				details: {
+					name: skill.name,
+					path: skill.filePath,
+					args: undefined,
+					lineCount: 1,
+				},
+			};
+		});
 
 		await runSubprocess({
 			...baseOptions,
