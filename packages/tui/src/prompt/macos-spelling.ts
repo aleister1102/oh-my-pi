@@ -174,7 +174,8 @@ export class MacOSSpellingProvider implements EditorTextAssistProvider {
 		cursorCol: number,
 	): Promise<EditorInlineReplacement | null> {
 		if (!this.#available || !this.#features.autocorrect) return null;
-		const textBeforeCursor = (lines[cursorLine] ?? "").slice(0, cursorCol);
+		const line = lines[cursorLine] ?? "";
+		const textBeforeCursor = line.slice(0, cursorCol);
 		const match = COMPLETED_WORD.exec(textBeforeCursor);
 		if (!match) return null;
 		const word = match[1] ?? "";
@@ -182,13 +183,23 @@ export class MacOSSpellingProvider implements EditorTextAssistProvider {
 		if (isMagicKeyword(word)) return null;
 		const boundary = match[2] ?? "";
 		const start = match.index;
+		// A word glued to a hyphen is part of a compound or identifier (`skills-zoj`, `--flag`); the
+		// regex above only captures the last segment, which the dictionary would "fix" on its own.
+		if (textBeforeCursor[start - 1] === "-") return null;
 		const masked = maskNonProse(textBeforeCursor);
 		if (!isProseWord(textBeforeCursor, masked, start, start + word.length)) return null;
 		const context = lineContext(lines, cursorLine);
 		if (!this.#prose.isProse(context, start, start + word.length)) return null;
 		try {
+			// Judge the word in the same scope the typo pass does: the whole draft up
+			// to the cursor. macOS resolves a dictionary per detected run, so asking
+			// about the current line alone lets a one-word line fall back to the
+			// preferred variant: `artifacts` came back as `artefacts` on an en_GB Mac
+			// while the undercurls, which see the whole draft, accepted it.
+			const lineOffset = lines.slice(0, cursorLine).reduce((offset, line) => offset + line.length + 1, 0);
+			const draft = `${lines.slice(0, cursorLine).join("\n")}${cursorLine > 0 ? "\n" : ""}${textBeforeCursor}`;
 			const correction = await withTimeout(
-				this.backend.autocorrectWord(textBeforeCursor, start, word.length),
+				this.backend.autocorrectWord(draft, lineOffset + start, word.length),
 				BACKEND_TIMEOUT_MS,
 				`macOS spelling service did not respond within ${BACKEND_TIMEOUT_MS}ms`,
 			);

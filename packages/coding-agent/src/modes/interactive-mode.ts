@@ -3676,7 +3676,13 @@ export class InteractiveMode implements InteractiveModeContext {
 				"spelling.autocorrect",
 			)
 		) {
-			this.composer.setPreferences(this.#liveComposerPreferences());
+			const prefs = this.#liveComposerPreferences();
+			this.composer.setPreferences(prefs);
+			this.hookEditor?.setSpellingFeatures({
+				typoDetection: prefs.spellingTypoDetection,
+				autocomplete: prefs.spellingAutocomplete,
+				autocorrect: prefs.spellingAutocorrect,
+			});
 			// setPreferences re-themes the editor, which resets its mode-tinted border.
 			this.updateEditorBorderColor();
 		}

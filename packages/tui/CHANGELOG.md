@@ -435,6 +435,7 @@
 ### Fixed
 
 - Fixed the Agents hub Time column rewinding and freezing for running subagents between progress updates ([#15140](https://github.com/can1357/oh-my-pi/pull/15140) by [@H4vC](https://github.com/H4vC))
+- Fixed macOS autocorrect rewriting the last part of hyphenated words such as `skills-zoj` while you type
 
 ## [18.8.7] - 2026-10-09
 
@@ -998,6 +999,16 @@
 ### Fixed
 
 - Fixed the Git TUI's word wrap splitting words across rows: wrapped rows now break at word and separator boundaries, and a break that would strand a wide gap fills the row instead ([#12472](https://github.com/can1357/oh-my-pi/pull/12472) by [@aleister1102](https://github.com/aleister1102)).
+### Fixed
+
+- Disabled macOS spelling assistance for command execution with `!` and Python execution with `$` ([#12474](https://github.com/can1357/oh-my-pi/pull/12474) by [@aleister1102](https://github.com/aleister1102)).
+### Fixed
+
+- Fixed macOS autocorrect rewriting a word the spellchecker accepts (`artifacts` → `artefacts` on a Mac whose preferred English is British): autocorrect now judges the whole draft, the same text the typo undercurls use, instead of the current line alone ([#12475](https://github.com/can1357/oh-my-pi/pull/12475) by [@aleister1102](https://github.com/aleister1102)).
+- Fixed the Git TUI's hunk stage, unstage, and discard failing with `patch does not apply: patch has no diff --git header`; generated hunk and line-selection patches now carry the git-format header the applier requires ([#12512](https://github.com/can1357/oh-my-pi/pull/12512) by [@aleister1102](https://github.com/aleister1102)).
+### Added
+
+- Enabled macOS spelling assistance (typo undercurls, autocomplete, autocorrect) in the hook and ask answer editor ([#12517](https://github.com/can1357/oh-my-pi/pull/12517) by [@aleister1102](https://github.com/aleister1102)).
 
 ## [18.2.5] - 2026-09-17
 
