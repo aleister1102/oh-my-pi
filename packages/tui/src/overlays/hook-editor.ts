@@ -30,6 +30,9 @@ import { OverlayPanel } from "../chrome/overlay-box";
 import { FormField } from "../components/form";
 import { formatKeyHint, formatKeyHints } from "../app-keybindings";
 import { boundKeys, editorKey, interruptKey } from "../chrome/keybinding-hints";
+import type { SpellingFeatures } from "../prompt/custom-editor";
+import { MacOSSpellingProvider } from "../prompt/macos-spelling";
+import { WordCompletionProvider } from "../prompt/word-completion";
 import { node, span } from "../native/describe";
 import type { DescribeContext, NativeChild, NativeNode } from "../native/node";
 import { hintsRow, type NativeHint, overlayCard } from "../native/overlay";
@@ -90,12 +93,15 @@ export interface HookEditorOptions {
 	 * hint out of view.
 	 */
 	maxHeight?: number;
+	/** Optional spelling assistance feature flags. When omitted, all features default to enabled. */
+	spellingFeatures?: Partial<SpellingFeatures>;
 }
 
 /** Interactive multiline dialog used by hooks and the ask tool's Other response. */
 export class HookEditorComponent extends OverlayPanel implements Focusable {
 	#editor: Editor;
 	#field: FormField;
+	#spelling = new MacOSSpellingProvider();
 	#onSubmitCallback: (value: string, images?: ImageContent[]) => void;
 	#onCancelCallback: () => void;
 	#tui: TUI;
@@ -103,6 +109,7 @@ export class HookEditorComponent extends OverlayPanel implements Focusable {
 	#acceptImages: boolean;
 	#images: ImageContent[];
 	#externalEditor: HookEditorOptions["externalEditor"];
+	#wordCompletion = new WordCompletionProvider();
 	#onPasteImage: HookEditorOptions["onPasteImage"];
 	#onPasteImagePath: HookEditorOptions["onPasteImagePath"];
 	#pasteHandler = new BracketedPasteHandler();
@@ -142,6 +149,32 @@ export class HookEditorComponent extends OverlayPanel implements Focusable {
 
 		// Editor
 		this.#editor = new Editor(getEditorTheme());
+		this.#spelling.onUpdate = () => {
+			this.#editor.invalidate();
+			this.#tui.requestRender();
+		};
+		this.#editor.onTextAssistApplied = () => {
+			this.#editor.invalidate();
+			this.#tui.requestRender();
+		};
+		this.#wordCompletion.onUpdate = () => {
+			this.#editor.invalidate();
+			this.#tui.requestRender();
+		};
+		this.#editor.setTextAssistProvider({
+			getWordCompletion: (lines, cursorLine, cursorCol) =>
+				this.#wordCompletion.getWordCompletion(lines, cursorLine, cursorCol),
+			wordCompletionFeedback: (lines, cursorLine, cursorCol, suggestion, accepted) =>
+				this.#wordCompletion.wordCompletionFeedback(lines, cursorLine, cursorCol, suggestion, accepted),
+			tryAutocorrect: (lines, cursorLine, cursorCol) => this.#spelling.tryAutocorrect(lines, cursorLine, cursorCol),
+			getWordReplacements: (lines, cursorLine, cursorCol) =>
+				this.#spelling.getWordReplacements(lines, cursorLine, cursorCol),
+		});
+		this.setSpellingFeatures({
+			typoDetection: options?.spellingFeatures?.typoDetection ?? true,
+			autocomplete: options?.spellingFeatures?.autocomplete ?? "auto",
+			autocorrect: options?.spellingFeatures?.autocorrect ?? true,
+		});
 		if (this.#promptStyle) {
 			this.#editor.setBorderVisible(false);
 			this.#editor.setPromptGutter("> ");
@@ -222,6 +255,12 @@ export class HookEditorComponent extends OverlayPanel implements Focusable {
 	override describe(_cx: DescribeContext): NativeNode {
 		this.#field.focused = this.focused;
 		return this.#nativeRoot;
+	}
+
+	/** Configure spelling features for the inner editor. */
+	setSpellingFeatures(features: SpellingFeatures): void {
+		this.#spelling.setFeatures({ typoDetection: features.typoDetection, autocorrect: features.autocorrect });
+		this.#wordCompletion.setMethod(features.autocomplete);
 	}
 
 	/** Keep the nested editor's software/hardware cursor mode aligned with the dialog focus target. */
@@ -416,6 +455,16 @@ export class HookEditorComponent extends OverlayPanel implements Focusable {
 
 		// Forward to editor
 		this.#editor.handleInput(keyData);
+	}
+
+	/** Inner editor accessor for testing and integration. */
+	get editor(): Editor {
+		return this.#editor;
+	}
+
+	/** Spelling provider accessor for testing and integration. */
+	get spellingProvider(): MacOSSpellingProvider {
+		return this.#spelling;
 	}
 
 	async #openExternalEditor(): Promise<void> {
