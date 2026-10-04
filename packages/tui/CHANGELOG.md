@@ -852,6 +852,10 @@
 ### Fixed
 
 - Fixed macOS autocorrect rewriting a word the spellchecker accepts (`artifacts` → `artefacts` on a Mac whose preferred English is British): autocorrect now judges the whole draft, the same text the typo undercurls use, instead of the current line alone ([#12475](https://github.com/can1357/oh-my-pi/pull/12475) by [@aleister1102](https://github.com/aleister1102)).
+- Fixed the Git TUI's hunk stage, unstage, and discard failing with `patch does not apply: patch has no diff --git header`; generated hunk and line-selection patches now carry the git-format header the applier requires ([#12512](https://github.com/can1357/oh-my-pi/pull/12512) by [@aleister1102](https://github.com/aleister1102)).
+### Added
+
+- Enabled macOS spelling assistance (typo undercurls, autocomplete, autocorrect) in the hook and ask answer editor ([#12517](https://github.com/can1357/oh-my-pi/pull/12517) by [@aleister1102](https://github.com/aleister1102)).
 
 ## [18.2.5] - 2026-09-17
 

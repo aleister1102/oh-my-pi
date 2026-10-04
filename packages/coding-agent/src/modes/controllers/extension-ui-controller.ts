@@ -47,6 +47,7 @@ import { setExtensionTerminalTitle, setSessionTerminalTitle } from "../../utils/
 import { getEditorCommand, openInEditor } from "../../utils/external-editor";
 import { launchTerminal } from "../../subprocess/terminal-launch";
 
+import { cfgSpellingAutocomplete, cfgSpellingAutocorrect, cfgSpellingTypoDetection } from "../settings";
 const MAX_WIDGET_LINES = 10;
 /** Approval answers, as a collab guest's select shows them. */
 const APPROVE_OPTION = "Approve";
@@ -847,7 +848,17 @@ export class ExtensionUiController {
 					prefill,
 					(text, images) => finishPrompt({ text, images }),
 					() => finishPrompt(undefined),
-					{ promptStyle: true, externalEditor: editDialogExternally, question: prompt.question, ...options },
+					{
+						promptStyle: true,
+						externalEditor: editDialogExternally,
+						spellingFeatures: {
+							typoDetection: this.ctx.settings ? cfgSpellingTypoDetection.get(this.ctx.settings) : true,
+							autocomplete: this.ctx.settings ? cfgSpellingAutocomplete.get(this.ctx.settings) : "auto",
+							autocorrect: this.ctx.settings ? cfgSpellingAutocorrect.get(this.ctx.settings) : false,
+						},
+						question: prompt.question,
+						...options,
+					},
 				);
 				this.ctx.editorContainer.clear();
 				this.ctx.editorContainer.addChild(promptEditor);
@@ -1236,7 +1247,15 @@ export class ExtensionUiController {
 				prefill,
 				value => settle(value),
 				() => settle(undefined),
-				{ ...editorOptions, externalEditor: editDialogExternally },
+				{
+					...editorOptions,
+					externalEditor: editDialogExternally,
+					spellingFeatures: {
+						typoDetection: this.ctx.settings ? cfgSpellingTypoDetection.get(this.ctx.settings) : true,
+						autocomplete: this.ctx.settings ? cfgSpellingAutocomplete.get(this.ctx.settings) : "auto",
+						autocorrect: this.ctx.settings ? cfgSpellingAutocorrect.get(this.ctx.settings) : false,
+					},
+				},
 			);
 			this.ctx.editorContainer.clear();
 			this.ctx.editorContainer.addChild(this.ctx.hookEditor);
