@@ -206,7 +206,6 @@ describe("macOS spelling feature gates", () => {
 			setMagicKeywords([]);
 		}
 	});
-
 	it("skips paths, slash commands, and inline code", async () => {
 		const provider = new MacOSSpellingProvider(
 			backend({
@@ -340,6 +339,25 @@ describe("macOS spelling feature gates", () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	it("does no spelling work on local-execution drafts", async () => {
+		const checkSpelling = mock(async () => [{ start: 6, length: 8 }]);
+		const autocorrectWord = mock(async () => "received");
+		const spellingGuesses = mock(async () => ["received"]);
+		const provider = new MacOSSpellingProvider(backend({ checkSpelling, autocorrectWord, spellingGuesses }), true);
+		provider.setFeatures({ typoDetection: true, autocorrect: true });
+
+		expect(provider.decorateTypos("recieved", decorationContext("!echo recieved", 0, 6))).toBe("recieved");
+		expect(await provider.tryAutocorrect(["!!git recieved "], 0, 15)).toBeNull();
+		expect(await provider.getWordReplacements(["$$ x recieved"], 0, 8)).toBeNull();
+
+		expect(checkSpelling).not.toHaveBeenCalled();
+		expect(autocorrectWord).not.toHaveBeenCalled();
+		expect(spellingGuesses).not.toHaveBeenCalled();
+
+		expect(await provider.tryAutocorrect(["$echo recieved "], 0, 15)).toEqual({
+			replaceLen: 9,
+			insert: "received ",
+		});
 	});
 });
 

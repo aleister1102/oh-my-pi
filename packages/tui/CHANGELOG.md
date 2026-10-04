@@ -846,6 +846,9 @@
 ### Fixed
 
 - Fixed the Git TUI's word wrap splitting words across rows: wrapped rows now break at word and separator boundaries, and a break that would strand a wide gap fills the row instead ([#12472](https://github.com/can1357/oh-my-pi/pull/12472) by [@aleister1102](https://github.com/aleister1102)).
+### Fixed
+
+- Disabled macOS spelling assistance for command execution with `!` and Python execution with `$` ([#12474](https://github.com/can1357/oh-my-pi/pull/12474) by [@aleister1102](https://github.com/aleister1102)).
 
 ## [18.2.5] - 2026-09-17
 
