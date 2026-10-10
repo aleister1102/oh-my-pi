@@ -283,6 +283,7 @@
 ### Fixed
 
 - Fixed the Agents hub Time column rewinding and freezing for running subagents between progress updates ([#15140](https://github.com/can1357/oh-my-pi/pull/15140) by [@H4vC](https://github.com/H4vC))
+- Fixed macOS autocorrect rewriting the last part of hyphenated words such as `skills-zoj` while you type
 
 ## [18.8.7] - 2026-10-09
 

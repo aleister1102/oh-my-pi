@@ -358,6 +358,7 @@ describe("macOS spelling feature gates", () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
 	it("does no spelling work on local-execution drafts", async () => {
 		const checkSpelling = mock(async () => [{ start: 6, length: 8 }]);
 		const autocorrectWord = mock(async () => "received");

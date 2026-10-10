@@ -174,6 +174,9 @@ export class MacOSSpellingProvider implements EditorTextAssistProvider {
 		if (isMagicKeyword(word)) return null;
 		const boundary = match[2] ?? "";
 		const start = match.index;
+		// A word glued to a hyphen is part of a compound or identifier (`skills-zoj`, `--flag`); the
+		// regex above only captures the last segment, which the dictionary would "fix" on its own.
+		if (textBeforeCursor[start - 1] === "-") return null;
 		const masked = maskNonProse(textBeforeCursor);
 		if (!isProseWord(textBeforeCursor, masked, start, start + word.length)) return null;
 		const context = lineContext(lines, cursorLine);
