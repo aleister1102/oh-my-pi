@@ -17,6 +17,7 @@
 ### Added
 
 - Supported invoking multiple skills in a single prompt submission (`/skill:foo /skill:bar`); every registered `/skill:<name>` token in the prompt is loaded, and unknown tokens stay in the prompt text ([#12535](https://github.com/can1357/oh-my-pi/pull/12535) by [@aleister1102](https://github.com/aleister1102))
+- Fixed marketplace plugin installs failing with a doubled `plugins/plugins/...` path when a catalog sets `metadata.pluginRoot` and its sources already start with `./`; `pluginRoot` now applies only to bare source names ([#18276](https://github.com/can1357/oh-my-pi/pull/18276) by [@aleister1102](https://github.com/aleister1102))
 
 ## [18.17.0] - 2026-11-06
 
