@@ -155,6 +155,7 @@ import { setWordPredictionHost } from "@oh-my-pi/pi-tui/prompt/word-completion";
 import { USER_INTERRUPT_LABEL } from "../session/messages";
 import { resolveMarkdownLinkHrefs } from "../internal-urls/hyperlink-targets";
 import type { ResolveContext } from "../internal-urls/index";
+import { isTodoStateEntryMetadata } from "../tools/todo";
 import { modelMentionDisplayName } from "@oh-my-pi/pi-tui/prompt/model-mention-syntax";
 import { modelMentionChipLabel, shiftImageMarkers } from "@oh-my-pi/pi-tui/prompt/composer-attachments";
 import { isTranscriptEntry, type SessionContext } from "../session/session-context";
@@ -662,11 +663,11 @@ function readPersistedToolNames(value: unknown): string[] | undefined {
 }
 
 export function shouldEnterPlanModeOnStartup(
-	sessionManager: Pick<SessionManager, "buildSessionContext" | "getEntries">,
+	sessionManager: Pick<SessionManager, "buildSessionContext" | "hasEntryType">,
 	sessionSettings: Settings,
 ): boolean {
 	const hasConversationContext = sessionManager.buildSessionContext().messages.length > 0;
-	const hasExplicitMode = sessionManager.getEntries().some(entry => entry.type === "mode_change");
+	const hasExplicitMode = sessionManager.hasEntryType("mode_change");
 	return (
 		!hasConversationContext &&
 		!hasExplicitMode &&
@@ -5033,7 +5034,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	#syncTodoHudState(owner: AgentSession): void {
 		this.#cancelTodoAutoClearTimer();
 		const phases = this.todoPhases;
-		const persisted = getTodoHudVisibility(owner.sessionManager.getBranch(), phases);
+		const persisted = getTodoHudVisibility(owner.sessionManager.getBranchMatching(isTodoStateEntryMetadata), phases);
 		this.#todoHudHidden = persisted === "dismissed";
 		if (persisted || phases.length === 0) return;
 		const tasks = phases.flatMap(phase => phase.tasks);
@@ -5054,7 +5055,11 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.#todoAutoClearTimer = undefined;
 			await owner.settleInFlightMessagePersistence();
 			if (!isCurrent()) return;
-			const data = createTodoHudStateData(owner.sessionManager.getBranch(), this.todoPhases, "dismissed");
+			const data = createTodoHudStateData(
+				owner.sessionManager.getBranchMatching(isTodoStateEntryMetadata),
+				this.todoPhases,
+				"dismissed",
+			);
 			if (!data) return;
 			owner.sessionManager.appendCustomEntry(TODO_HUD_STATE_CUSTOM_TYPE, data);
 			await owner.sessionManager.flush();
@@ -9614,7 +9619,11 @@ export class InteractiveMode implements InteractiveModeContext {
 			const appendReveal = (data: TodoHudStateEntryData): void => {
 				owner.sessionManager.appendCustomEntry(TODO_HUD_STATE_CUSTOM_TYPE, data);
 			};
-			const data = createTodoHudStateData(owner.sessionManager.getBranch(), this.todoPhases, "revealed");
+			const data = createTodoHudStateData(
+				owner.sessionManager.getBranchMatching(isTodoStateEntryMetadata),
+				this.todoPhases,
+				"revealed",
+			);
 			if (data) {
 				try {
 					appendReveal(data);
@@ -9638,7 +9647,7 @@ export class InteractiveMode implements InteractiveModeContext {
 						)
 							return;
 						const settledData = createTodoHudStateData(
-							owner.sessionManager.getBranch(),
+							owner.sessionManager.getBranchMatching(isTodoStateEntryMetadata),
 							this.todoPhases,
 							"revealed",
 						);
