@@ -20,6 +20,7 @@ import {
 	cfgTodoReminders,
 	cfgTodoRemindersMax,
 } from "../tools/settings";
+import { isTodoStateEntryMetadata } from "../tools/todo";
 
 const MID_RUN_NUDGE_MUTATION_THRESHOLD = 12;
 /** `todo.midRunNudges: capped` — unanswered nudges allowed before going silent until the next reset. */
@@ -137,7 +138,9 @@ export class TodoTracker {
 
 	/** Rehydrates todo phases from the current transcript branch. */
 	syncFromBranch(): void {
-		this.setPhases(getLatestTodoPhasesFromEntries(this.#host.sessionManager.getBranch()));
+		this.setPhases(
+			getLatestTodoPhasesFromEntries(this.#host.sessionManager.getBranchMatching(isTodoStateEntryMetadata)),
+		);
 	}
 
 	/** Returns a defensive clone suitable for snapshots and branch state. */

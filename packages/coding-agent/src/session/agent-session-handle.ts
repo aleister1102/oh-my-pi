@@ -49,7 +49,7 @@ import type { IdleMaintenanceOptions } from "./idle-maintenance";
 import type { CustomMessage } from "./messages";
 import type { ServingModel } from "./retry-fallback-chains";
 import type { AdvisorStatusOverviewEntry } from "./session-advisors";
-import type { SessionContext, TranscriptSessionContextOptions } from "./session-context";
+import type { SessionContext, SessionContextEntryMetadata, TranscriptSessionContextOptions } from "./session-context";
 import type { ModelUsageRecord, SessionEntry, UsageStatistics } from "./session-entries";
 
 /** Session-manager reads other agents' code performs on a session it does not own. */
@@ -195,6 +195,8 @@ export interface AgentViewSessionManager extends AgentSessionManagerHandle {
 	getLeafId(): string | null;
 	/** The newest entry that moves the conversation, when the active branch ends at it (`conversationTip`). */
 	getConversationTip(): SessionEntry | undefined;
+	/** Current-branch entries whose payload-free metadata matches `predicate`, in path order. */
+	getBranchMatching(predicate: (metadata: SessionContextEntryMetadata) => boolean): SessionEntry[];
 	/** Append a custom entry (a worker-homed session appends on its home thread). */
 	appendCustomEntry(customType: string, data?: unknown): void;
 	/** Flush pending writes to disk. */

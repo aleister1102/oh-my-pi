@@ -119,61 +119,78 @@ interface UnfinishedTurn {
 	recordedAt: string;
 }
 
+interface BranchTail {
+	tail: AgentMessage | undefined;
+	tailIndex: number;
+	previousAssistant: AssistantMessage | undefined;
+	exit: SessionExitData | undefined;
+	exitIndex: number;
+	normalExitIndex: number;
+}
+
 /**
- * Index of the branch's tail: its last `message` entry, or -1. An eval runtime snapshot
- * that follows a completed answer (an assistant `stop`) is not the tail when nothing
- * that could start a turn came after that answer: an idle context rebuild (compaction,
- * pruning) persists one after a finished turn without starting another, so the answer
- * is the tail. Any other snapshot stays the tail, so a request that overflow recovery
- * was retrying (after Esc and `/retry`) still counts as unfinished, and so does a custom
- * message prompt (an extension's `triggerTurn`, which is a `custom_message` entry, not a
- * `message`) before or after the snapshot. A custom message after an answer with no
- * snapshot is not the tail, as before.
+ * Read the branch tail and exits in a single pass without retaining its history.
+ * A trailing eval snapshot after an assistant `stop` is idle unless a custom
+ * prompt that can start a turn follows that answer (before or after the
+ * snapshot). Other trailing snapshots stay the tail, including the one
+ * persisted while overflow recovery retries a request. Without a trailing
+ * snapshot, only a `message` entry can be the tail.
  */
-function findTailIndex(entries: readonly SessionEntry[]): number {
+function scanBranchTail(entries: Iterable<SessionEntry>): BranchTail {
+	let tail: AgentMessage | undefined;
+	let tailIndex = -1;
+	let snapshot: AgentMessage | undefined;
 	let snapshotIndex = -1;
 	let customPrompt = false;
-	for (let index = entries.length - 1; index >= 0; index--) {
-		const entry = entries[index]!;
-		if (entry.type === "custom_message") {
+	let previousAssistant: AssistantMessage | undefined;
+	let exit: SessionExitData | undefined;
+	let exitIndex = -1;
+	let normalExitIndex = -1;
+	let index = -1;
+	for (const entry of entries) {
+		index++;
+		if (entry.type === "message") {
+			const message = entry.message;
+			if (isEvalStateContext(message)) {
+				snapshot = message;
+				snapshotIndex = index;
+				continue;
+			}
+			tail = message;
+			tailIndex = index;
+			if (message.role === "assistant") previousAssistant = message;
+			snapshot = undefined;
+			customPrompt = false;
+		} else if (entry.type === "custom_message") {
 			if (entry.customType !== EVAL_STATE_CONTEXT_TYPE && !entry.excludeFromContext) customPrompt = true;
-			continue;
+		} else {
+			const candidate = readSessionExit(entry);
+			if (!candidate) continue;
+			exit = candidate;
+			exitIndex = index;
+			if (candidate.kind === "normal") normalExitIndex = index;
 		}
-		if (entry.type !== "message") continue;
-		if (isEvalStateContext(entry.message)) {
-			if (snapshotIndex < 0) snapshotIndex = index;
-			continue;
-		}
-		const finished = entry.message.role === "assistant" && entry.message.stopReason === "stop";
-		return snapshotIndex >= 0 && (customPrompt || !finished) ? snapshotIndex : index;
 	}
-	return snapshotIndex;
+	const finished = tail?.role === "assistant" && tail.stopReason === "stop";
+	if (snapshot && (customPrompt || !finished)) {
+		tail = snapshot;
+		tailIndex = snapshotIndex;
+	}
+	return { tail, tailIndex, previousAssistant, exit, exitIndex, normalExitIndex };
 }
 
 /**
  * The turn a branch's last process left unfinished: a non-terminal message tail
- * ({@link findTailIndex}: a prompt or tool results the model never answered, tool calls
+ * ({@link scanBranchTail}: a prompt or tool results the model never answered, tool calls
  * without results) followed by a process exit, recorded or (with `assumeExit`) assumed.
  * A recorded normal exit with nothing pending, a terminal assistant tail, and tool
  * results that close an aborted or failed turn leave nothing unfinished.
  */
 function findUnfinishedTurn(
-	entries: readonly SessionEntry[],
+	{ tail, tailIndex, previousAssistant, exit: recordedExit, exitIndex }: BranchTail,
 	options?: InterruptedTurnOptions,
 ): UnfinishedTurn | undefined {
-	let exitIndex = -1;
-	let exit: SessionExitData | undefined;
-	for (let index = entries.length - 1; index >= 0; index--) {
-		const candidate = readSessionExit(entries[index]!);
-		if (!candidate) continue;
-		exitIndex = index;
-		exit = candidate;
-		break;
-	}
-
-	const tailIndex = findTailIndex(entries);
-	const tailEntry = tailIndex >= 0 ? entries[tailIndex] : undefined;
-	const tail: AgentMessage | undefined = tailEntry?.type === "message" ? tailEntry.message : undefined;
+	let exit = recordedExit;
 	if (!tail) return undefined;
 	if (!exit || tailIndex > exitIndex) {
 		if (!options?.assumeExit) return undefined;
@@ -182,14 +199,6 @@ function findUnfinishedTurn(
 		return undefined;
 	}
 	if (tail.role === "assistant" && !tail.content.some(isToolCallContent)) return undefined;
-
-	let previousAssistant: AssistantMessage | undefined;
-	for (let index = tailIndex; index >= 0; index--) {
-		const entry = entries[index]!;
-		if (entry.type !== "message" || entry.message.role !== "assistant") continue;
-		previousAssistant = entry.message;
-		break;
-	}
 	if (
 		tail.role === "toolResult" &&
 		(previousAssistant?.stopReason === "error" || previousAssistant?.stopReason === "aborted")
@@ -244,15 +253,13 @@ function isFalseAbortAfterSnapshot(entries: readonly SessionEntry[], abortIndex:
  * abort only closed an idle eval snapshot ({@link isFalseAbortAfterSnapshot}).
  */
 export function hasRestorableTurn(entries: readonly SessionEntry[]): boolean {
-	const tailIndex = findTailIndex(entries);
-	for (let index = entries.length - 1; index > tailIndex; index--) {
-		if (readSessionExit(entries[index]!)?.kind === "normal") return false;
-	}
-	const tail = tailIndex >= 0 ? entries[tailIndex]! : undefined;
-	if (tail?.type === "message" && isInterruptedTurnAbort(tail.message)) {
+	const branchTail = scanBranchTail(entries);
+	const { tail, tailIndex, normalExitIndex } = branchTail;
+	if (normalExitIndex > tailIndex) return false;
+	if (tail && isInterruptedTurnAbort(tail)) {
 		return !isFalseAbortAfterSnapshot(entries, tailIndex);
 	}
-	return findUnfinishedTurn(entries, { assumeExit: true }) !== undefined;
+	return findUnfinishedTurn(branchTail, { assumeExit: true }) !== undefined;
 }
 
 /**
@@ -261,11 +268,11 @@ export function hasRestorableTurn(entries: readonly SessionEntry[]): boolean {
  * ({@link findUnfinishedTurn}; with `assumeExit`, also when no exit was recorded).
  */
 export function createInterruptedTurnAbortMessage(
-	entries: readonly SessionEntry[],
+	entries: Iterable<SessionEntry>,
 	fallbackModel?: AssistantModelMetadata,
 	options?: InterruptedTurnOptions,
 ): AssistantMessage | undefined {
-	const turn = findUnfinishedTurn(entries, options);
+	const turn = findUnfinishedTurn(scanBranchTail(entries), options);
 	if (!turn) return undefined;
 	const model = turn.previousAssistant ?? fallbackModel;
 	if (!model) return undefined;
@@ -291,40 +298,36 @@ export function createInterruptedTurnAbortMessage(
 	};
 }
 
-/**
- * Whether a persisted process exit follows the branch's last message: the
- * branch's writer is gone, so resume recovery owns its interrupted tail.
- */
-export function sessionExitFollowsLastMessage(entries: readonly SessionEntry[]): boolean {
-	for (let index = entries.length - 1; index >= 0; index--) {
-		const entry = entries[index]!;
-		if (entry.type === "message") return false;
-		if (readSessionExit(entry)) return true;
+/** Whether a persisted process exit follows the branch's last message. */
+export function sessionExitFollowsLastMessage(entries: Iterable<SessionEntry>): boolean {
+	let follows = false;
+	for (const entry of entries) {
+		if (entry.type === "message") follows = false;
+		else if (readSessionExit(entry)) follows = true;
 	}
-	return false;
+	return follows;
 }
 
 /** Pairs unresolved calls at the end of an interrupted turn with result messages. */
 export function createInterruptedToolResults(
-	entries: readonly SessionEntry[],
+	entries: Iterable<SessionEntry>,
 	context: "process-exit" | "fork" = "process-exit",
 ): ToolResultMessage[] {
 	let tail: AgentMessage | undefined;
 	let assistant: AssistantMessage | undefined;
-	for (let index = entries.length - 1; index >= 0; index--) {
-		const entry = entries[index];
-		if (entry?.type !== "message") continue;
-		tail ??= entry.message;
-		if (entry.message.role === "assistant") {
-			assistant = entry.message;
-			break;
+	const pending = new Map<string, PendingToolCallRecord>();
+	for (const entry of entries) {
+		if (entry.type === "message") {
+			tail = entry.message;
+			if (entry.message.role === "assistant") assistant = entry.message;
+			applyMessageEntry(pending, entry.message);
+		} else {
+			const marker = readToolExecutionStart(entry);
+			if (marker) applyToolExecutionStart(pending, marker);
 		}
 	}
 	if (!assistant || (context !== "fork" && tail?.role !== "assistant" && tail?.role !== "toolResult")) return [];
-	const pendingById = new Map<string, PendingToolCallDiagnostic>();
-	for (const call of collectPendingToolCalls(entries)) {
-		if (call.toolCallId) pendingById.set(call.toolCallId, call);
-	}
+	const pendingById = pending;
 	const results: ToolResultMessage[] = [];
 	for (const call of assistant.content) {
 		if (call.type !== "toolCall" || !pendingById.has(call.id)) continue;
@@ -458,7 +461,7 @@ function applyMessageEntry(pending: Map<string, PendingToolCallRecord>, message:
 }
 
 /** Finds tool calls left pending at the end of a session branch. */
-export function collectPendingToolCalls(entries: readonly SessionEntry[]): PendingToolCallDiagnostic[] {
+export function collectPendingToolCalls(entries: Iterable<SessionEntry>): PendingToolCallDiagnostic[] {
 	const pending = new Map<string, PendingToolCallRecord>();
 	for (const entry of entries) {
 		if (entry.type === "message") {
@@ -490,7 +493,7 @@ function formatPendingToolCall(call: PendingToolCallDiagnostic): string {
 }
 
 /** Builds the resume warning shown when a prior branch ended mid-tool-call. */
-export function describePendingToolCalls(entries: readonly SessionEntry[]): string | undefined {
+export function describePendingToolCalls(entries: Iterable<SessionEntry>): string | undefined {
 	const pending = collectPendingToolCalls(entries);
 	if (pending.length === 0) return undefined;
 	const formatted = pending.map(formatPendingToolCall).join(", ");

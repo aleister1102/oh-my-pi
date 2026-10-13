@@ -81,6 +81,7 @@ function createHost(
 			getLastModelChangeRole: () => options.lastModelChangeRole,
 			getBranch: () => [],
 			getBranchView: () => [],
+			iterateBranch: () => [],
 			getSessionId: () => "test-session",
 		} as never,
 		persistedAssistantEntryId: () => undefined,
