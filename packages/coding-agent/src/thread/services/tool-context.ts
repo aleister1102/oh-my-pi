@@ -172,6 +172,26 @@ export class ToolContextSessionView implements ReadonlySessionManager {
 	getUsageStatistics(): UsageStatistics {
 		throw new CrossThreadSessionReadError("getUsageStatistics");
 	}
+
+	getContextBranch(): SessionEntry[] {
+		throw new CrossThreadSessionReadError("getContextBranch");
+	}
+
+	getEntryCount(): number {
+		throw new CrossThreadSessionReadError("getEntryCount");
+	}
+
+	hasEntryType(_type: SessionEntry["type"]): boolean {
+		throw new CrossThreadSessionReadError("hasEntryType");
+	}
+
+	iterateEntries(_type?: SessionEntry["type"]): IterableIterator<SessionEntry> {
+		throw new CrossThreadSessionReadError("iterateEntries");
+	}
+
+	iterateBranch(_type?: SessionEntry["type"]): IterableIterator<SessionEntry> {
+		throw new CrossThreadSessionReadError("iterateBranch");
+	}
 }
 
 /** Structural match for a `CustomToolContext` built by sdk/session-tools (plain object, live getters). */
