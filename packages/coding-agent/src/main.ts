@@ -1348,7 +1348,7 @@ export async function createSessionManager(
 			await SessionManager.continueRecent(cwd, parsed.sessionDir),
 			parsed.sessionDir,
 		);
-		if (manager.getEntries().length > 0) {
+		if (manager.getEntryCount() > 0) {
 			parsed.continue = true;
 		}
 		return manager;
@@ -2254,7 +2254,7 @@ export async function runRootCommand(
 		}
 
 		if (sessionManager && (parsedArgs.continue || parsedArgs.resume || parsedArgs.fork || foreignSource)) {
-			const pendingToolWarning = describePendingToolCalls(sessionManager.getBranch());
+			const pendingToolWarning = describePendingToolCalls(sessionManager.iterateBranch());
 			if (pendingToolWarning) {
 				logger.warn("Resumed session has pending tool calls", {
 					sessionId: sessionManager.getSessionId(),
