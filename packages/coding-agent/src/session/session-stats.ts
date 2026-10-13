@@ -173,7 +173,7 @@ export class SessionStatsTracker {
 				if (usage) addUsage(usage);
 			}
 		}
-		forEachActiveModelUsage(this.#host.sessionManager.getBranchView(), addUsage);
+		forEachActiveModelUsage(this.#host.sessionManager.getContextBranch(), addUsage);
 		return tokens;
 	}
 
@@ -244,7 +244,7 @@ export class SessionStatsTracker {
 				}
 			}
 		}
-		forEachActiveModelUsage(this.#host.sessionManager.getBranchView(), addUsage);
+		forEachActiveModelUsage(this.#host.sessionManager.getContextBranch(), addUsage);
 		return {
 			sessionFile: this.#host.sessionManager.getSessionFile(),
 			sessionId: this.#host.sessionId(),
@@ -294,7 +294,7 @@ export class SessionStatsTracker {
 			nonMessageTokens: computeNonMessageTokens(this.#host.session, this.#tokenizer, settings?.revision),
 			toolSchemaTokens: toolsTokens,
 		};
-		const branchEntries = this.#host.sessionManager.getBranchView();
+		const branchEntries = this.#host.sessionManager.getContextBranch();
 		const latestCompaction = getLatestCompactionEntry(branchEntries);
 		const compactionIndex = latestCompaction ? branchEntries.lastIndexOf(latestCompaction) : -1;
 		let usedTokens = 0;
@@ -440,7 +440,7 @@ export class SessionStatsTracker {
 	recordAnchoredHistoryRewrite(tokensRemoved: number): void {
 		if (!Number.isFinite(tokensRemoved) || tokensRemoved <= 0) return;
 
-		const branchEntries = this.#host.sessionManager.getBranchView();
+		const branchEntries = this.#host.sessionManager.getContextBranch();
 		const latestCompaction = getLatestCompactionEntry(branchEntries);
 		const compactionIndex = latestCompaction ? branchEntries.lastIndexOf(latestCompaction) : -1;
 		for (let index = branchEntries.length - 1; index > compactionIndex; index--) {
@@ -457,6 +457,7 @@ export class SessionStatsTracker {
 			}
 			const snapshot = assistant.contextSnapshot;
 			snapshot.historyRewriteTokensRemoved = (snapshot.historyRewriteTokensRemoved ?? 0) + Math.floor(tokensRemoved);
+			this.#host.sessionManager.updateEntry(entry);
 			this.#contextUsageRevision++;
 			return;
 		}

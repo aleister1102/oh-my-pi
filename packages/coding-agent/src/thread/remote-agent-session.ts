@@ -92,6 +92,7 @@ import type { ServingModel } from "../session/retry-fallback-chains";
 import {
 	buildSessionContext,
 	type SessionContext,
+	sessionContextEntryMetadata,
 	type TranscriptSessionContextOptions,
 } from "../session/session-context";
 import type { CustomEntry, SessionEntry } from "../session/session-entries";
@@ -341,6 +342,8 @@ export class RemoteAgentSession implements AgentViewSession {
 			getBranch: fromId => this.#entryIndex.pathTo(fromId),
 			getLeafId: () => this.#entryIndex.leafId(),
 			getConversationTip: () => conversationTip(this.#entries, this.#entryIndex.branchView()),
+			getBranchMatching: predicate =>
+				this.#entryIndex.branchView().filter(entry => predicate(sessionContextEntryMetadata(entry))),
 			getSeanceSourceArtifactsDir: () => this.#view.seanceSourceArtifactsDir,
 			appendCustomEntry: (customType, data) => this.#appendCustomEntry(customType, data),
 			flush: () => this.#command("flushSession"),
@@ -532,7 +535,7 @@ export class RemoteAgentSession implements AgentViewSession {
 	/** Display transcript built on main from the mirrored entries (already in display form) and leaf. */
 	buildTranscriptSessionContext(options?: TranscriptSessionContextOptions): SessionContext {
 		const keepLive = options?.keepInFlightToolCalls === true && this.#state.isStreaming;
-		return buildSessionContext(this.#entries, this.#entryIndex.leafId(), this.#entryIndex.entriesById(), {
+		return buildSessionContext(this.#entries, this.#entryIndex.leafId(), undefined, {
 			transcript: true,
 			collapseCompactedHistory: options?.collapseCompactedHistory,
 			inFlightToolCallIds: keepLive ? this.#runToolCallIds : undefined,
