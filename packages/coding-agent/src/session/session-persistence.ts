@@ -110,6 +110,22 @@ interface ExternalizedImage {
  */
 const externalizedImageRefs = new WeakMap<BlobStore, WeakMap<object, ExternalizedImage>>();
 
+/** Errors thrown by blob writes during a persist; {@link prepareEntryForPersistence} does not retry them. */
+const blobWriteFailures = new WeakSet<object>();
+
+function trackBlobWrite<T>(write: () => T): T {
+	try {
+		return write();
+	} catch (error) {
+		if (typeof error === "object" && error !== null) blobWriteFailures.add(error);
+		throw error;
+	}
+}
+
+function isBlobWriteFailure(error: unknown): boolean {
+	return typeof error === "object" && error !== null && blobWriteFailures.has(error);
+}
+
 function externalizeImagePayloadSync(
 	blobStore: BlobStore,
 	payload: object,
@@ -119,7 +135,7 @@ function externalizeImagePayloadSync(
 	let refs = externalizedImageRefs.get(blobStore);
 	const cached = refs?.get(payload);
 	if (cached && cached.data === data && cached.mimeType === mimeType) return cached.ref;
-	const ref = externalizeImageDataSync(blobStore, data, mimeType);
+	const ref = trackBlobWrite(() => externalizeImageDataSync(blobStore, data, mimeType));
 	if (!refs) {
 		refs = new WeakMap();
 		externalizedImageRefs.set(blobStore, refs);
@@ -251,7 +267,7 @@ function truncateForPersistence(obj: unknown, blobStore: BlobStore, key?: string
 
 	if (typeof obj === "string") {
 		if (key === "image_url" && isImageDataUrl(obj)) {
-			return externalizeImageDataUrlSync(blobStore, obj);
+			return trackBlobWrite(() => externalizeImageDataUrlSync(blobStore, obj));
 		}
 		if (obj.length > MAX_PERSIST_CHARS) {
 			// Defensive: signature keys normally sit on blocks the guard above returns
@@ -571,6 +587,8 @@ export function prepareEntryForPersistence(entry: FileEntry, blobStore: BlobStor
 	try {
 		return truncateForPersistence(projected, blobStore) as FileEntry;
 	} catch (error) {
+		// A blob write that failed is not retried: the retry would write the blob again and could succeed.
+		if (isBlobWriteFailure(error)) throw error;
 		// The walk probes fields such as `data` and `type` with `in` and plain
 		// reads, so it also reaches non-enumerable and inherited accessors that
 		// the JSONL line never holds. Tool `details` can keep a library object
