@@ -108,6 +108,9 @@ const appSchema = type({
 	"target?": type("string").describe(
 		"URL/title substring picking the page to drive; inside Tern, adopts the user's browser block (or its id)",
 	),
+	"new_page?": type("boolean").describe(
+		"connected browser (cdp_url / browser.cdpUrl): open a fresh tab instead of adopting the visible one; the tab closes with it",
+	),
 });
 
 const tabCallStepSchema = type({
@@ -510,6 +513,7 @@ async function openOnKind(
 							}
 						: undefined,
 					target: params.app?.target,
+					newPage: params.app?.new_page,
 					timeoutMs,
 					deadlineStartMs: deadlineStart,
 					dialogs: params.dialogs,

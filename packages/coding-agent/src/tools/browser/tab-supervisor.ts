@@ -167,6 +167,12 @@ export interface AcquireTabOptions {
 	waitUntil?: "load" | "domcontentloaded" | "networkidle0" | "networkidle2";
 	viewport?: { width: number; height: number; deviceScaleFactor?: number };
 	target?: string;
+	/**
+	 * Connected browsers only: create a fresh tab when no `target` is given instead of adopting the
+	 * visible one. The tab owns that page, so closing it closes the page. Opt-in, because attaching
+	 * to drive the page the user is looking at stays the default.
+	 */
+	newPage?: boolean;
 	signal?: AbortSignal;
 	timeoutMs: number;
 	/**
@@ -1827,6 +1833,11 @@ async function buildInitPayload(browser: PuppeteerBrowserHandle, opts: AcquireTa
 		// selected tab alone, in the browser of the tab omp used last on this relay.
 		// Focus emulation keeps it interactive without raising it.
 		page = { kind: "create", nearTargetId: lastUsedTargetOn(browser) };
+	} else if (browser.kind.kind === "connected" && opts.newPage && !opts.target) {
+		// Opt-in fresh tab on a connected browser: the page stays omp's, so releasing the
+		// tab closes it. Defaults are untouched: without new_page a connected open keeps
+		// adopting the visible tab, and an explicit target is still borrowed.
+		page = { kind: "create" };
 	} else {
 		// A connected browser without a target adopts the tab the user is looking at
 		// rather than whichever CDP lists first; an explicit target is borrowed.

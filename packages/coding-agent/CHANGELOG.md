@@ -365,6 +365,9 @@
 - Fixed sessions whose first reply starts with a todo plan getting a title without its icon and code: the plan's title refresh no longer replaces the card title that is still being generated
 - Fixed generated titles that come out without an icon and code (a subagent's title, a title-model fallback, a malformed card reply) staying plain: they now get a card like `/rename` titles do
 - Fixed running the test suite adding fixture titles (`PLAN`, `renamed session`, …) to your real `~/.omp/agent/history.db`
+### Added
+
+- Added `app.new_page` to `browser.open` for connected browsers (`app.cdp_url` or `browser.cdpUrl`): without it a connected open still adopts the visible tab, while `app.new_page: true` opens a fresh tab that the tab owns and closes with it, so parallel agents no longer overwrite each other's page
 
 ## [18.12.2] - 2026-10-18
 
