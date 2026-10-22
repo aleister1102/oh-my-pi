@@ -13,6 +13,7 @@
 ### Changed
 
 - Finished subagents now park 5 seconds after going idle instead of 7 minutes, so long sessions that spawn many subagents no longer hold every finished one in memory; `history://`, `agent://` and messages still reach a parked agent (`task.agentIdleTtlMs`) ([#14037](https://github.com/can1357/oh-my-pi/pull/14037) by [@theolundqvist](https://github.com/theolundqvist)).
+- `omp` starts faster: the browser's accessibility audit now loads its `axe-core` engine on demand, so a launch no longer pays for it ([#16775](https://github.com/can1357/oh-my-pi/pull/16775) by [@yuzu-octopus](https://github.com/yuzu-octopus))
 
 ### Fixed
 
