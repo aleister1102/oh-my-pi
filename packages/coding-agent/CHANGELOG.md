@@ -10,6 +10,10 @@
 - Anthropic web search and Files API uploads follow `PI_ANTHROPIC_API_VERSION=2026-10-21`; web search omits `temperature` under that version ([#16706](https://github.com/can1357/oh-my-pi/pull/16706) by [@H4vC](https://github.com/H4vC))
 - llama.cpp auto-discovery now also finds local servers on llama-server's new default port 9931 when nothing answers on 8080 ([#16675](https://github.com/can1357/oh-my-pi/pull/16675) by [@bartbroere](https://github.com/bartbroere))
 
+### Changed
+
+- Finished subagents now park 5 seconds after going idle instead of 7 minutes, so long sessions that spawn many subagents no longer hold every finished one in memory; `history://`, `agent://` and messages still reach a parked agent (`task.agentIdleTtlMs`) ([#14037](https://github.com/can1357/oh-my-pi/pull/14037) by [@theolundqvist](https://github.com/theolundqvist)).
+
 ### Fixed
 
 - Fixed advisors dropping their review and showing a rate-limit error when the provider returns a timed 429 such as Codex's `turn_rate_limit_exceeded`; the advisor now waits out the Retry-After (within `retry.maxDelayMs`) and retries like the main agent ([#17087](https://github.com/can1357/oh-my-pi/pull/17087) by [@H4vC](https://github.com/H4vC))
