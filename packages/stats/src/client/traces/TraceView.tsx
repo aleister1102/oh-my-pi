@@ -7,6 +7,7 @@
 import { ArrowLeft, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSessionTrace } from "../api";
+import { formatInteger } from "../data/formatters";
 import { useQuery } from "../data/query";
 import type { SessionTrace, TraceSpan, TraceSpanKind, TraceTrack } from "../types";
 import { Card, ChartSkeleton, PageHeader, QueryView, SearchInput, Segmented } from "../ui";
@@ -253,6 +254,14 @@ export function TraceView({ file, active, onBack }: TraceViewProps) {
 				{loaded => (
 					<>
 						<SummaryStrip summary={loaded.summary} />
+
+						{loaded.truncated && (
+							<div className="traces-truncated" role="status">
+								Trace payload capped for size: {formatInteger(loaded.truncated.spans)} spans and{" "}
+								{formatInteger(loaded.truncated.tracks)} tracks omitted. Summary totals still cover the full
+								session.
+							</div>
+						)}
 
 						<Card
 							index={1}

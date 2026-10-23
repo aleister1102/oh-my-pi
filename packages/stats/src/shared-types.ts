@@ -641,6 +641,14 @@ export interface TraceSummary {
 	toolStats: TraceToolStat[];
 }
 
+/** Payload cap counts when a trace exceeds the dashboard's size guard. */
+export interface TraceTruncation {
+	/** Tracks omitted from the end of the DFS track list. */
+	tracks: number;
+	/** Spans omitted after the per-trace span budget was exhausted. */
+	spans: number;
+}
+
 /** Complete span tree for one session, `/api/session/trace` payload. */
 export interface SessionTrace {
 	file: string;
@@ -648,15 +656,18 @@ export interface SessionTrace {
 	cwd: string | null;
 	startedAt: number;
 	endedAt: number;
-	/** Root transcript mtime; doubles as the ETag. */
+	/** Root transcript mtime; part of the ETag. */
 	mtimeMs: number;
 	/**
-	 * Conditional-request fingerprint `"<rootMs>:<childHighMs>"` (see
-	 * traceFingerprintForEtag): the server ETag is built from this, so a
-	 * subagent-only append changes the ETag even when the root is untouched.
+	 * Conditional-request fingerprint `"<rootMs>:<rootSize>:<digest>"` (see
+	 * traceFingerprintForEtag): the digest folds the child-transcript set into a
+	 * fixed-size key, so a subagent-only append changes the ETag even when the
+	 * root is untouched without making `If-None-Match` unbounded.
 	 */
 	etag: string;
 	/** DFS order, main first. */
 	tracks: TraceTrack[];
+	/** Present when the payload was capped for size; summary totals are unaffected. */
+	truncated?: TraceTruncation;
 	summary: TraceSummary;
 }

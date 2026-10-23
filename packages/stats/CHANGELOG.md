@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed the trace dashboard returning HTTP 431 on subagent-heavy sessions: the trace ETag now hashes the child-transcript fingerprint to a fixed-size value instead of echoing the unbounded `name@mtime` list in `If-None-Match`.
+
+### Changed
+
+- Heavy trace sessions now reuse parsed transcripts and parse only appended tails, keep an LRU of recent traces, look up span-drawer entries by index, gzip trace/entry responses, and cap pathological payloads with a visible truncation notice.
+
 ## [18.12.0] - 2026-10-17
 
 ### Fixed
