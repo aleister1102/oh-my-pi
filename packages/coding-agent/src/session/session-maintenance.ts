@@ -4669,15 +4669,14 @@ export class SessionMaintenance {
 
 	/** `message` rebuilt from its archive's no-reasoning view, one copy per original and view. */
 	async #readerSummary(message: CompactionSummaryMessage, model: Model): Promise<CompactionSummaryMessage> {
-		const entry = this.#host.sessionManager
-			.getBranchView()
-			.findLast(
-				(entry): entry is CompactionEntry =>
-					entry.type === "compaction" &&
-					entry.summary === message.summary &&
-					new Date(entry.timestamp).getTime() === message.timestamp &&
-					snapcompact.getPreservedArchive(entry.preserveData) !== undefined,
-			);
+		const entry = this.#host.sessionManager.findLastBranchEntry(
+			metadata => metadata.type === "compaction",
+			(candidate): candidate is CompactionEntry =>
+				candidate.type === "compaction" &&
+				candidate.summary === message.summary &&
+				new Date(candidate.timestamp).getTime() === message.timestamp &&
+				snapcompact.getPreservedArchive(candidate.preserveData) !== undefined,
+		);
 		// No archive behind it (e.g. archive text a summarizer folded into a plain
 		// summary): scrub the summary text itself and keep no blocks.
 		const view = entry

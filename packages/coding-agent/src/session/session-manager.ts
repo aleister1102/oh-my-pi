@@ -4080,6 +4080,33 @@ export class SessionManager {
 	}
 
 	/**
+	 * Newest current-branch entry whose payload-free metadata matches (and, when
+	 * given, whose payload passes `accept`). Walks leaf-to-root and reads only
+	 * metadata-matching candidates, so a long branch is never materialized.
+	 */
+	findLastBranchEntry<T extends SessionEntry>(
+		predicate: (metadata: SessionContextEntryMetadata) => boolean,
+		accept: (entry: SessionEntry) => entry is T,
+	): T | undefined;
+	findLastBranchEntry(
+		predicate: (metadata: SessionContextEntryMetadata) => boolean,
+		accept?: (entry: SessionEntry) => boolean,
+	): SessionEntry | undefined;
+	findLastBranchEntry(
+		predicate: (metadata: SessionContextEntryMetadata) => boolean,
+		accept?: (entry: SessionEntry) => boolean,
+	): SessionEntry | undefined {
+		const path = this.#index.metadataPath();
+		for (let index = path.length - 1; index >= 0; index--) {
+			const metadata = path[index]!;
+			if (!predicate(metadata)) continue;
+			const entry = this.#index.get(metadata.id, false);
+			if (entry && (!accept || accept(entry))) return entry;
+		}
+		return undefined;
+	}
+
+	/**
 	 * The active-leaf branch (same entries as `getBranch()`) without the
 	 * defensive copy. The array is the manager's memo: never mutate it. It is
 	 * live — an entry appended to the current leaf is pushed onto it — so use
