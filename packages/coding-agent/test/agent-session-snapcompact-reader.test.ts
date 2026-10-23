@@ -13,6 +13,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "bun:te
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { Agent } from "@oh-my-pi/pi-agent-core";
 import type { AssistantMessage, Context, Message, Model } from "@oh-my-pi/pi-ai";
 import { createMockModel, type MockModel } from "@oh-my-pi/pi-ai/providers/mock";
@@ -23,6 +24,7 @@ import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { convertToLlm } from "@oh-my-pi/pi-coding-agent/session/messages";
 import type { CompactionEntry } from "@oh-my-pi/pi-coding-agent/session/session-entries";
+import * as sessionLoader from "@oh-my-pi/pi-coding-agent/session/session-loader";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
 import { getAgentDir, setAgentDir } from "@oh-my-pi/pi-utils";
 import * as snapcompact from "@oh-my-pi/snapcompact";
@@ -457,11 +459,72 @@ describe("snapcompact archive read by another model", () => {
 		const keptId = plain.appendMessage({ role: "user", content: "Kept turn.", timestamp: Date.now() });
 		plain.appendCompaction(EXTENSION_SUMMARY, "Earlier work.", keptId, 100);
 		const plainSession = startSession(plain, gpt).session;
-		const branchLookups = vi.spyOn(plain.getBranchView(), "findLast");
+		const branchLookups = vi.spyOn(plain, "findLastBranchEntry");
 		for (let call = 0; call < 3; call++) {
 			const sent = requestContent(await plainSession.convertMessagesToLlm(plainSession.messages, undefined, claude));
 			expect(sent.text).toContain(EXTENSION_FACT);
 		}
 		expect(branchLookups).toHaveBeenCalledTimes(1);
+	});
+
+	// Replay reads the archive's compaction, not the history before it.
+	it("sends Claude no reasoning from a reopened journal without reading the history before the archive", async () => {
+		const dir = path.join(tempDir, "selective-history");
+		await fs.mkdir(dir, { recursive: true });
+		const created = SessionManager.create(dir, dir);
+		const oldId = created.appendMessage({
+			role: "toolResult",
+			toolCallId: "old-read",
+			toolName: "read",
+			content: [{ type: "text", text: "old ".repeat(50_000) }],
+			isError: false,
+			timestamp: Date.now(),
+		});
+		await seedArchive(created, { summary: EXTENSION_SUMMARY });
+		const writer = startSession(created, gpt).session;
+		const expected = requestContent(await writer.convertMessagesToLlm(writer.messages, undefined, claude));
+		await created.flush();
+		const file = created.getSessionFile()!;
+		await created.close();
+
+		const reopened = await SessionManager.open(file, dir);
+		const { session } = startSession(reopened, gpt);
+		await reopened.flush();
+		await setImmediate();
+		Bun.gc(true);
+		await setImmediate();
+		Bun.gc(true);
+		const reads = vi.spyOn(sessionLoader, "readPositionedSessionEntry");
+		const { text, images } = requestContent(await session.convertMessagesToLlm(session.messages, undefined, claude));
+		expect(reads.mock.calls.map(([, position]) => position.id)).not.toContain(oldId);
+		expect(text).toContain(EXTENSION_FACT);
+		expect(text).not.toContain(REASONING);
+		expect(reopened.getEntry(oldId)).toMatchObject({ id: oldId, type: "message" });
+		expect(reads.mock.calls.map(([, position]) => position.id)).toContain(oldId);
+		expect(images.length).toBeGreaterThan(0);
+		expect(images).toEqual(expected.images);
+	});
+
+	// A miss holds only until the branch revision moves, so an archive attached later is found.
+	it("finds an archive attached by an in-place update after a cached miss", async () => {
+		const scratch = SessionManager.inMemory();
+		const archived = await seedArchive(scratch, { summary: EXTENSION_SUMMARY });
+
+		const plain = SessionManager.inMemory();
+		const keptId = plain.appendMessage({ role: "user", content: "Kept turn.", timestamp: Date.now() });
+		plain.appendCompaction(EXTENSION_SUMMARY, "Earlier work.", keptId, 100);
+		const { session } = startSession(plain, gpt);
+		const before = requestContent(await session.convertMessagesToLlm(session.messages, undefined, claude));
+		expect(before.images).toEqual([]);
+		expect(before.text).toContain(EXTENSION_FACT);
+
+		const entry = latestCompaction(plain);
+		entry.preserveData = archived.preserveData;
+		plain.updateEntry(entry);
+		const after = requestContent(await session.convertMessagesToLlm(session.messages, undefined, claude));
+		expect(after.text).not.toContain(REASONING);
+		const variant = snapcompact.getPreservedArchive(latestCompaction(plain).preserveData)!.withoutThinking!;
+		expect(after.images.length).toBeGreaterThan(0);
+		expect(after.images).toEqual(variant.archive.frames.map(frame => frame.data));
 	});
 });
