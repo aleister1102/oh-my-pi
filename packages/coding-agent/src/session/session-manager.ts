@@ -558,6 +558,8 @@ class SessionEntryIndex {
 	// leaf appends to the issued view in O(1); a leaf change or rebuild starts
 	// a fresh array. Weak ownership lets dropped historical views be collected.
 	#generation = 0;
+	// Advances on branch or payload changes; negative branch lookups key on it.
+	#branchRevision = 0;
 	#metadataCache: { generation: number; leaf: string | null | undefined; path: IndexedSessionEntry[] } | undefined;
 	#branchCache: { leaf: string | null; generation: number; branch: WeakRef<SessionEntry[]> } | undefined;
 	#read?: (entry: IndexedSessionEntry) => SessionEntry;
@@ -575,6 +577,7 @@ class SessionEntryIndex {
 		this.#usage = emptyUsageStatistics();
 		this.#active.clear();
 		this.#generation++;
+		this.#branchRevision++;
 		this.#branchCache = undefined;
 		if (closeReader) {
 			readerRegistry.unregister(this);
@@ -638,6 +641,7 @@ class SessionEntryIndex {
 		const nextLeaf = sessionEntryLeafId(entry);
 		this.#leaf = nextLeaf;
 		this.#generation++;
+		this.#branchRevision++;
 		const cache = this.#branchCache;
 		const branch = cache?.branch.deref();
 		if (
@@ -723,6 +727,7 @@ class SessionEntryIndex {
 		this.#leaf = id;
 		this.#active.clear();
 		this.#generation++;
+		this.#branchRevision++;
 		this.#branchCache = undefined;
 	}
 
@@ -762,6 +767,10 @@ class SessionEntryIndex {
 		const branch = this.metadataPath().map(entry => this.get(entry.id)!);
 		this.#branchCache = { leaf: this.#leaf, generation: this.#generation, branch: new WeakRef(branch) };
 		return branch;
+	}
+
+	branchRevision(): number {
+		return this.#branchRevision;
 	}
 
 	#metadataLeafPath(id: string | null | undefined = this.#leaf): IndexedSessionEntry[] {
@@ -821,6 +830,8 @@ class SessionEntryIndex {
 	update(entry: SessionEntry): void {
 		const indexed = this.#entriesById.get(entry.id);
 		if (!indexed) throw new Error(`Session entry ${entry.id} not found`);
+		// Payload-only updates keep the generation (and so the branch memo) but may change what a lookup accepts.
+		this.#branchRevision++;
 		if (indexed.parentId !== entry.parentId || indexed.type !== entry.type) {
 			const siblings = this.#children.get(indexed.parentId);
 			if (siblings) {
@@ -4188,6 +4199,33 @@ export class SessionManager {
 	}
 
 	/**
+	 * Newest current-branch entry whose payload-free metadata matches (and, when
+	 * given, whose payload passes `accept`). Walks leaf-to-root and reads only
+	 * metadata-matching candidates, so a long branch is never materialized.
+	 */
+	findLastBranchEntry<T extends SessionEntry>(
+		predicate: (metadata: SessionContextEntryMetadata) => boolean,
+		accept: (entry: SessionEntry) => entry is T,
+	): T | undefined;
+	findLastBranchEntry(
+		predicate: (metadata: SessionContextEntryMetadata) => boolean,
+		accept?: (entry: SessionEntry) => boolean,
+	): SessionEntry | undefined;
+	findLastBranchEntry(
+		predicate: (metadata: SessionContextEntryMetadata) => boolean,
+		accept?: (entry: SessionEntry) => boolean,
+	): SessionEntry | undefined {
+		const path = this.#index.metadataPath();
+		for (let index = path.length - 1; index >= 0; index--) {
+			const metadata = path[index]!;
+			if (!predicate(metadata)) continue;
+			const entry = this.#index.get(metadata.id, false);
+			if (entry && (!accept || accept(entry))) return entry;
+		}
+		return undefined;
+	}
+
+	/**
 	 * The active-leaf branch (same entries as `getBranch()`) without the
 	 * defensive copy. The array is the manager's memo: never mutate it. It is
 	 * live — an entry appended to the current leaf is pushed onto it — so use
@@ -4195,6 +4233,11 @@ export class SessionManager {
 	 */
 	getBranchView(): readonly SessionEntry[] {
 		return this.#index.branchView();
+	}
+
+	/** Advances on every change to the active branch or its payloads. */
+	getBranchRevision(): number {
+		return this.#index.branchRevision();
 	}
 
 	/**
