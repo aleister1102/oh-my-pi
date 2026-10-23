@@ -26,7 +26,7 @@ import {
 	setContextHistoryIndex,
 } from "@oh-my-pi/pi-ai/utils/block-symbols";
 import type { KeyId } from "@oh-my-pi/pi-tui";
-import { logger } from "@oh-my-pi/pi-utils";
+import { logger, withLoopPhase } from "@oh-my-pi/pi-utils";
 import { refreshShellConfigCache } from "@oh-my-pi/pi-utils/procmgr";
 import { MAIN_AGENT_RULE_NAME } from "../../capability/rule";
 import type { ModelRegistry } from "../../config/model-registry";
@@ -132,6 +132,40 @@ export interface ToolCallPreflight {
 
 export const EXTENSION_HANDLER_TIMEOUT_MS = 30_000;
 let extensionHandlerTimeoutMs = EXTENSION_HANDLER_TIMEOUT_MS;
+
+/**
+ * A handler whose synchronous part holds the event loop this long is logged
+ * (the TUI's loop watchdog reports blocks from the same length).
+ */
+const SLOW_HANDLER_MS = 250;
+/** Extension handlers already logged as slow (`path\0event`): one warning each per process. */
+const reportedSlowHandlers = new Set<string>();
+
+/**
+ * Call an extension handler under a loop phase naming it, so a block of the
+ * event loop inside it is logged (`ui.loop-blocked`) with that phase rather
+ * than "unknown". Only the synchronous part, up to the handler's first
+ * `await`, runs under the phase and is timed: that part freezes the UI (input
+ * echo, rendering) for every session in the process, in-process subagents
+ * included, and no handler timeout can interrupt it.
+ */
+function invokeExtensionHandler<R>(ext: Extension, eventType: string, call: () => R): R {
+	const started = performance.now();
+	try {
+		return withLoopPhase(`extension:${ext.path}:${eventType}`, call);
+	} finally {
+		const heldMs = performance.now() - started;
+		const key = `${ext.path}\0${eventType}`;
+		if (heldMs >= SLOW_HANDLER_MS && !reportedSlowHandlers.has(key)) {
+			reportedSlowHandlers.add(key);
+			logger.warn("Extension handler blocked the event loop", {
+				extensionPath: ext.path,
+				event: eventType,
+				heldMs: Math.round(heldMs),
+			});
+		}
+	}
+}
 
 function throwUnsupportedServiceTierAction(): never {
 	throw new Error("This extension host does not support service-tier actions");
@@ -1642,7 +1676,7 @@ export class ExtensionRunner {
 								event.type === "tool_call" ? budget : undefined,
 							);
 							result = await this.#toolRegistrationScope.run(registrationScope, () =>
-								handler(event, handlerContext),
+								invokeExtensionHandler(ext, event.type, () => handler(event, handlerContext)),
 							);
 						} catch (error) {
 							handlerFailure = { error };

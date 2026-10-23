@@ -2960,6 +2960,8 @@ export class TUI extends Container {
 			data = data.slice(0, searchFrom + match.index) + data.slice(searchFrom + match.index + match[0].length);
 		}
 		if (data.length === 0) return;
+		// The frame echoing this key may go out ahead of credit-held output.
+		if (this.#nativeLive) this.#native!.noteInput();
 
 		if (this.#heldInput !== undefined && this.#focusedComponent === this.#heldFocus) {
 			this.#holdInput(data);
