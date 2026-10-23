@@ -366,6 +366,31 @@ describe("loadEntriesFromFileStream (Bun.JSONL parity)", () => {
 		expect(loaded.malformedRecords).toBe(1);
 	});
 
+	it("matches parseSessionContent on pretty-printed records spanning thousands of lines", async () => {
+		// Multi-line records take the gallop/bisect path; it must settle on the same newline the
+		// line-by-line scan would, including a value followed by junk on its last line.
+		const pretty = (id: string, parentId: string, lines: number) =>
+			JSON.stringify(
+				{ ...msg(id, parentId, "pretty"), details: Array.from({ length: lines }, (_, i) => `line ${i}`) },
+				null,
+				2,
+			);
+		const content = [
+			JSON.stringify(HEADER),
+			pretty("p1", "s1", 20_000),
+			JSON.stringify(msg("m1", "p1", "between")),
+			`${pretty("p2", "m1", 3)} trailing junk`,
+			pretty("p3", "p2", 5_000),
+			"",
+		].join("\n");
+		const file = await writeTemp(content);
+
+		const stream = await sessionLoader.loadEntriesFromFileStream(file);
+		expect(stream).toEqual(sessionLoader.parseSessionContent(content));
+		expect(entryIds(stream.entries)).toEqual(["s1", "p1", "m1", "p2", "p3"]);
+		expect(stream.malformedRecords).toBe(1);
+	});
+
 	it("counts a truncated header-only file as malformed and an invalid header", async () => {
 		// Cut mid-value: parseChunk reports "incomplete", not a syntax error, so the
 		// fragment used to vanish without being counted (parseJsonlLenient counts it).

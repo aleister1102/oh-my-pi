@@ -16,6 +16,8 @@ import { type HindsightMessage, hasSubstantiveContent } from "./content";
 
 export interface ReadonlySessionManagerLike {
 	getEntries(): SessionEntry[];
+	/** Streams entries of one type, decoding each lazily; preferred over a full `getEntries()` copy. */
+	iterateEntries?(type?: SessionEntry["type"]): Iterable<SessionEntry>;
 }
 
 /**
@@ -35,7 +37,8 @@ export interface ReadonlySessionManagerLike {
 export function extractMessages(sessionManager: ReadonlySessionManagerLike): HindsightMessage[] {
 	const messages: HindsightMessage[] = [];
 
-	for (const entry of sessionManager.getEntries()) {
+	// Typed iterator decodes message records one at a time; getEntries() decodes and holds the whole journal.
+	for (const entry of sessionManager.iterateEntries?.("message") ?? sessionManager.getEntries()) {
 		if (entry.type !== "message") continue;
 		const msg = entry.message;
 		const role = msg.role;
@@ -56,7 +59,7 @@ export function extractMessages(sessionManager: ReadonlySessionManagerLike): Hin
  */
 export function countUserTurns(sessionManager: ReadonlySessionManagerLike): number {
 	let count = 0;
-	for (const entry of sessionManager.getEntries()) {
+	for (const entry of sessionManager.iterateEntries?.("message") ?? sessionManager.getEntries()) {
 		if (entry.type !== "message" || entry.message.role !== "user") continue;
 		if (hasSubstantiveContent(extractUserText(entry.message))) count++;
 	}

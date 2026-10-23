@@ -87,12 +87,16 @@ function makeCtx(): RenderInitialMessagesTestContext {
 			sessionManager: {
 				buildSessionContext: llmContextSpy,
 				getEntries: vi.fn(() => []),
+				getEntryCount: vi.fn(() => 0),
+				iterateEntries: vi.fn(() => []),
 				getCwd: vi.fn(() => "/tmp"),
 			},
 		},
 		sessionManager: {
 			buildSessionContext: llmContextSpy,
 			getEntries: vi.fn(() => []),
+			getEntryCount: vi.fn(() => 0),
+			iterateEntries: vi.fn(() => []),
 			getCwd: vi.fn(() => "/tmp"),
 		},
 		renderSessionContextIncrementally: renderSessionContextSpy,
@@ -197,6 +201,8 @@ function makeRenderCtx(
 			extensionRunner: undefined,
 			sessionManager: {
 				getEntries: vi.fn(() => []),
+				getEntryCount: vi.fn(() => 0),
+				iterateEntries: vi.fn(() => []),
 				getCwd: vi.fn(() => "/tmp"),
 				putBlobSync: vi.fn(() => ({
 					hash: "hash",
@@ -208,6 +214,8 @@ function makeRenderCtx(
 		},
 		sessionManager: {
 			getEntries: vi.fn(() => []),
+			getEntryCount: vi.fn(() => 0),
+			iterateEntries: vi.fn(() => []),
 			getCwd: vi.fn(() => "/tmp"),
 			putBlobSync: vi.fn(() => ({
 				hash: "hash",
@@ -797,17 +805,14 @@ describe("UiHelpers.renderSessionContext — mid-stream tool call rebuild", () =
 });
 
 describe("UiHelpers.renderInitialMessages — replay convergence (issue #7811)", () => {
-	/** getEntries mock whose returned array grows on every call, simulating a
-	 * source that persists a new session entry during every replay pass. */
+	/** getEntryCount mock that grows on every call, simulating a source that
+	 * persists a new session entry during every replay pass. */
 	function growingEntriesCtx(): RenderInitialMessagesTestContext {
 		const made = makeCtx();
 		let calls = 0;
-		const getEntries = vi.fn(() => {
-			calls++;
-			return Array.from({ length: calls }, () => ({ type: "message" }));
-		});
-		(made.ctx.viewSession.sessionManager as unknown as { getEntries: unknown }).getEntries = getEntries;
-		(made.ctx.sessionManager as unknown as { getEntries: unknown }).getEntries = getEntries;
+		const getEntryCount = vi.fn(() => ++calls);
+		(made.ctx.viewSession.sessionManager as unknown as { getEntryCount: unknown }).getEntryCount = getEntryCount;
+		(made.ctx.sessionManager as unknown as { getEntryCount: unknown }).getEntryCount = getEntryCount;
 		return made;
 	}
 
@@ -833,15 +838,11 @@ describe("UiHelpers.renderInitialMessages — replay convergence (issue #7811)",
 		// context, then the stable entry count exits the loop.
 		await Settings.init({ inMemory: true });
 		const { ctx, transcriptSpy } = makeCtx();
-		const lengths = [0, 1, 1, 1, 1, 1, 1, 1];
+		const counts = [0, 1, 1, 1, 1, 1, 1, 1];
 		let call = 0;
-		const getEntries = vi.fn(() => {
-			const length = lengths[Math.min(call, lengths.length - 1)]!;
-			call++;
-			return Array.from({ length }, () => ({ type: "message" }));
-		});
-		(ctx.viewSession.sessionManager as unknown as { getEntries: unknown }).getEntries = getEntries;
-		(ctx.sessionManager as unknown as { getEntries: unknown }).getEntries = getEntries;
+		const getEntryCount = vi.fn(() => counts[Math.min(call++, counts.length - 1)]!);
+		(ctx.viewSession.sessionManager as unknown as { getEntryCount: unknown }).getEntryCount = getEntryCount;
+		(ctx.sessionManager as unknown as { getEntryCount: unknown }).getEntryCount = getEntryCount;
 
 		await new UiHelpers(ctx).renderInitialMessages();
 

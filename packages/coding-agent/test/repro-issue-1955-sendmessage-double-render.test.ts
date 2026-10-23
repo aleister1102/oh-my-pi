@@ -136,12 +136,18 @@ function createHarness(): Harness {
 		session: sessionMock,
 		viewSession: {
 			buildTranscriptSessionContext: () => buildSessionContext(entries),
-			sessionManager: { getEntries: () => entries },
+			sessionManager: {
+				getEntries: () => entries,
+				getEntryCount: () => entries.length,
+				iterateEntries: (type?: string) => entries.filter(entry => !type || entry.type === type),
+			},
 		},
 		focusedAgentId: undefined,
 		sessionManager: {
 			buildSessionContext: () => buildSessionContext(entries),
 			getEntries: () => entries,
+			getEntryCount: () => entries.length,
+			iterateEntries: (type?: string) => entries.filter(entry => !type || entry.type === type),
 		},
 		setToolUIContext: vi.fn(),
 		setEditorComponent: vi.fn(),

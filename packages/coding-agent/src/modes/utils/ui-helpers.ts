@@ -1075,7 +1075,8 @@ export class UiHelpers {
 			collapseCompactedHistory: cfgDisplayCollapseCompacted.get(settings),
 			keepInFlightToolCalls: this.ctx.viewSession.isStreaming,
 		});
-		let replayEntryCount = this.ctx.viewSession.sessionManager.getEntries().length;
+		// Index count, not getEntries(): that decodes every journal record from disk.
+		let replayEntryCount = this.ctx.viewSession.sessionManager.getEntryCount();
 
 		// Build against a detached container. Incremental construction still yields
 		// to terminal input, while paints keep using the complete visible transcript
@@ -1121,7 +1122,7 @@ export class UiHelpers {
 					await this.ctx.renderSessionContextIncrementally(context, renderOptions);
 				}
 				if (generation !== this.#replayGeneration) return;
-				if (this.ctx.viewSession.sessionManager.getEntries().length === replayEntryCount) {
+				if (this.ctx.viewSession.sessionManager.getEntryCount() === replayEntryCount) {
 					break;
 				}
 				replayAttempts++;
@@ -1132,7 +1133,7 @@ export class UiHelpers {
 					logger.warn("renderInitialMessages: transcript replay did not converge; accepting current replay", {
 						attempts: replayAttempts,
 						replayEntryCount,
-						currentEntryCount: this.ctx.viewSession.sessionManager.getEntries().length,
+						currentEntryCount: this.ctx.viewSession.sessionManager.getEntryCount(),
 					});
 					break;
 				}
@@ -1144,7 +1145,7 @@ export class UiHelpers {
 					collapseCompactedHistory: cfgDisplayCollapseCompacted.get(settings),
 					keepInFlightToolCalls: this.ctx.viewSession.isStreaming,
 				});
-				replayEntryCount = this.ctx.viewSession.sessionManager.getEntries().length;
+				replayEntryCount = this.ctx.viewSession.sessionManager.getEntryCount();
 				await refreshAssistantMessageLinkTargets(
 					this.ctx,
 					context.messages.filter((message): message is AssistantMessage => message.role === "assistant"),
@@ -1175,14 +1176,9 @@ export class UiHelpers {
 			}
 			committed = true;
 
-			// Show compaction info if session was compacted.
-			const allEntries = this.ctx.viewSession.sessionManager.getEntries();
+			// Show compaction info if session was compacted. Decode only compaction records.
 			let compactionCount = 0;
-			for (const entry of allEntries) {
-				if (entry.type === "compaction") {
-					compactionCount++;
-				}
-			}
+			for (const _ of this.ctx.viewSession.sessionManager.iterateEntries("compaction")) compactionCount++;
 			if (compactionCount > 0) {
 				const times = compactionCount === 1 ? "1 time" : `${compactionCount} times`;
 				this.ctx.showStatus(`Session compacted ${times}`);

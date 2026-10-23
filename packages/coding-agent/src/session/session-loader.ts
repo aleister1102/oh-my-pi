@@ -325,38 +325,70 @@ export async function visitEntriesFromFileStream(
 			}
 			let recordEnd = firstNewline;
 			let awaitingMoreData = false;
-			while (true) {
-				const { values, error, read, done } = Bun.JSONL.parseChunk(view, start, recordEnd + 1);
-				if (values.length > 0) {
-					// `read` is the absolute end of the parsed value. On success the
-					// record keeps its trailing whitespace and newline.
-					const valueEnd = error ? read : recordEnd + 1;
-					consumed = recordEnd + 1;
-					await emit(values[0] as FileEntry, start, valueEnd);
-					if (error && !stopped) skipMalformed(read, recordEnd);
-					break;
+			// A record that spans many physical lines must not be re-parsed from its start at
+			// every newline (quadratic for a pretty-printed JSON file): gallop to a newline
+			// where the value settles, then bisect to the first such newline.
+			const probe = (end: number) => Bun.JSONL.parseChunk(view, start, end + 1);
+			const settled = (result: { values: unknown[]; error?: unknown; done: boolean }): boolean =>
+				result.values.length > 0 || Boolean(result.error) || result.done;
+			let parsed = probe(recordEnd);
+			if (!settled(parsed)) {
+				const lastNewline = view.lastIndexOf(0x0a);
+				let low = recordEnd;
+				let high = -1;
+				for (let step = 4096; low < lastNewline; step *= 2) {
+					const next = view.indexOf(0x0a, low + step);
+					const candidate = next >= 0 ? next : lastNewline;
+					const attempt = probe(candidate);
+					if (settled(attempt)) {
+						high = candidate;
+						parsed = attempt;
+						break;
+					}
+					low = candidate;
 				}
-				if (error || done) {
-					// Malformed before any value: skip its physical line only.
-					const errorStart = Math.max(start, read);
-					const nextNewline = view.indexOf(0x0a, errorStart);
-					consumed = nextNewline + 1;
-					skipMalformed(errorStart, nextNewline);
-					break;
+				if (high < 0) {
+					// The value does not complete within the buffered bytes.
+					if (!atEnd) {
+						awaitingMoreData = true;
+					} else {
+						// The value never completes before EOF: one malformed record.
+						consumed = view.length;
+						skipMalformed(start, view.length);
+					}
+				} else {
+					while (true) {
+						const middle = low + ((high - low) >> 1);
+						let candidate = view.lastIndexOf(0x0a, middle);
+						if (candidate <= low) candidate = view.indexOf(0x0a, middle + 1);
+						if (candidate <= low || candidate >= high) break;
+						const attempt = probe(candidate);
+						if (settled(attempt)) {
+							high = candidate;
+							parsed = attempt;
+						} else {
+							low = candidate;
+						}
+					}
+					recordEnd = high;
 				}
-				const nextNewline = view.indexOf(0x0a, recordEnd + 1);
-				if (nextNewline >= 0) {
-					recordEnd = nextNewline;
-					continue;
-				}
-				if (!atEnd) {
-					awaitingMoreData = true;
-					break;
-				}
-				// The value never completes before EOF: one malformed record.
-				consumed = view.length;
-				skipMalformed(start, view.length);
-				break;
+			}
+			if (awaitingMoreData) break;
+			if (consumed === view.length) break;
+			const { values, error, read } = parsed;
+			if (values.length > 0) {
+				// `read` is the absolute end of the parsed value. On success the
+				// record keeps its trailing whitespace and newline.
+				const valueEnd = error ? read : recordEnd + 1;
+				consumed = recordEnd + 1;
+				await emit(values[0] as FileEntry, start, valueEnd);
+				if (error && !stopped) skipMalformed(read, recordEnd);
+			} else {
+				// Malformed before any value: skip its physical line only.
+				const errorStart = Math.max(start, read);
+				const nextNewline = view.indexOf(0x0a, errorStart);
+				consumed = nextNewline + 1;
+				skipMalformed(errorStart, nextNewline);
 			}
 			if (awaitingMoreData) break;
 		}

@@ -78,11 +78,15 @@ function makeRenderCtx(transcript: SessionContext): { ctx: InteractiveModeContex
 			extensionRunner: undefined,
 			sessionManager: {
 				getEntries: vi.fn(() => []),
+				getEntryCount: vi.fn(() => 0),
+				iterateEntries: vi.fn(() => []),
 				getCwd: vi.fn(() => "/tmp"),
 			},
 		},
 		sessionManager: {
 			getEntries: vi.fn(() => []),
+			getEntryCount: vi.fn(() => 0),
+			iterateEntries: vi.fn(() => []),
 			getCwd: vi.fn(() => "/tmp"),
 			putBlobSync: vi.fn(() => ({
 				hash: "hash",
