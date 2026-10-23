@@ -144,6 +144,8 @@
 - Out-of-credit provider errors now fail immediately instead of retrying for long periods; Retry works promptly once the account is funded.
 - DeepSeek-style `*** End` and `*** End Patch` markers are no longer written into files or truncate later edits
 - Composer prediction ghost text no longer vanishes when advisor messages arrive
+- Fixed marketplace plugin installs failing with a doubled `plugins/plugins/...` path when a catalog sets `metadata.pluginRoot` and its sources already start with `./`; `pluginRoot` now applies only to bare source names
+- Replaying a compacted session avoids loading the full earlier history to find its archive, keeping memory use lower in long conversations.
 
 ## [18.16.0] - 2026-11-02
 
@@ -699,6 +701,7 @@
 - Fixed the `computer` tool prompt leaving `el.selectText` out of the element helpers; it now says a following `el.type` on that element replaces the selection ([#16769](https://github.com/can1357/oh-my-pi/pull/16769) by [@will-bogusz](https://github.com/will-bogusz))
 - Fixed language servers keeping every file omp ever opened loaded for the whole session; files unused for 5 minutes are now closed when omp opens another, so the server can free that memory ([#15418](https://github.com/can1357/oh-my-pi/pull/15418) by [@will-bogusz](https://github.com/will-bogusz))
 - Fixed `write` turning a CRLF file into LF and dropping its UTF-8 BOM when it replaces the file; it now keeps both, as `edit` does ([#16575](https://github.com/can1357/oh-my-pi/pull/16575) by [@will-bogusz](https://github.com/will-bogusz))
+- Fixed a resumed long session holding its whole pre-compaction history in memory: the system-prompt digest lookup pinned the fully loaded branch, so every compacted-away message, reasoning block and tool output stayed resident; it now reads only the newest digest record (about 50 MB less live heap on a 35 MB transcript compacted 18 times)
 
 ## [18.12.6] - 2026-10-21
 
