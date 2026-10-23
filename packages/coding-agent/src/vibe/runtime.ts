@@ -34,6 +34,7 @@ import { MCPManager } from "../mcp/manager";
 import vibeTurnResultTemplate from "../prompts/tools/vibe-turn-result.md" with { type: "text" };
 import { AgentLifecycleManager } from "../registry/agent-lifecycle";
 import { type AgentRef, AgentRegistry, MAIN_AGENT_ID } from "../registry/agent-registry";
+import type { SessionEntry } from "../session/session-entries";
 import { SessionManager, SessionPersistenceIndeterminateError } from "../session/session-manager";
 import { getBundledAgent } from "../task/agents";
 import { type ExecutorOptions, runSubagentFollowUpTurn, runSubprocess } from "../task/executor";
@@ -100,7 +101,10 @@ export interface VibeParentSession {
 	getSessionFile: () => string | null;
 	sessionManager?: ToolSession["sessionManager"] &
 		Partial<
-			Pick<SessionManager, "appendModeChange" | "appendEntriesAtomically" | "recoverPersistenceFromCurrentState">
+			Pick<
+				SessionManager,
+				"appendModeChange" | "appendEntriesAtomically" | "recoverPersistenceFromCurrentState" | "iterateEntries"
+			>
 		>;
 	asyncJobManager?: AsyncJobManager;
 	settings: ToolSession["settings"];
@@ -217,6 +221,15 @@ async function waitForVibeTeardown(tasks: readonly TrackedVibeTeardown[], deadli
 /** Normalize a text fragment to one bounded roster/trace line. */
 function firstLine(text: string, max = 100): string {
 	return oneLineLabel(text, max);
+}
+
+/**
+ * Persisted `custom` entries of the parent journal. A full `getEntries()` decodes
+ * every journal record from disk; the typed iterator decodes only custom ones.
+ */
+function parentCustomEntries(sessionManager: VibeParentSession["sessionManager"]): Iterable<SessionEntry> {
+	if (!sessionManager) return [];
+	return sessionManager.iterateEntries?.("custom") ?? sessionManager.getEntries();
 }
 
 function scopeKey(scope: VibeOwnerScope, id: string): string {
@@ -420,7 +433,7 @@ export class VibeSessionRegistry {
 
 	#hasInMemoryTombstone(session: VibeParentSession, record: VibeRecord): boolean {
 		let terminalReason: VibeTombstoneReason | undefined;
-		for (const entry of session.sessionManager?.getEntries() ?? []) {
+		for (const entry of parentCustomEntries(session.sessionManager)) {
 			if (entry.type !== "custom" || entry.customType !== VIBE_LIFECYCLE_CUSTOM_TYPE) continue;
 			const event = parseLifecycleEvent(entry.data);
 			if (
@@ -576,7 +589,7 @@ export class VibeSessionRegistry {
 
 	#persistedIds(session: VibeParentSession, scope: VibeOwnerScope): Set<string> {
 		const ids = new Set<string>();
-		for (const entry of session.sessionManager?.getEntries() ?? []) {
+		for (const entry of parentCustomEntries(session.sessionManager)) {
 			if (entry.type !== "custom" || entry.customType !== VIBE_LIFECYCLE_CUSTOM_TYPE) continue;
 			const event = parseLifecycleEvent(entry.data);
 			if (event?.ownerId === scope.ownerId && event.parentSessionId === scope.parentSessionId) ids.add(event.id);
@@ -693,7 +706,7 @@ export class VibeSessionRegistry {
 		const scope = this.ownerScope(session);
 		const allSpawns = new Map<string, VibeSpawnLifecycleEvent>();
 		const terminalIntents = new Map<string, VibeTombstoneReason>();
-		for (const entry of sessionManager.getEntries()) {
+		for (const entry of parentCustomEntries(sessionManager)) {
 			if (entry.type !== "custom" || entry.customType !== VIBE_LIFECYCLE_CUSTOM_TYPE) continue;
 			const event = parseLifecycleEvent(entry.data);
 			if (!event || event.ownerId !== scope.ownerId || event.parentSessionId !== scope.parentSessionId) continue;

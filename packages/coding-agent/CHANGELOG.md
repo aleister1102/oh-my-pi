@@ -388,6 +388,7 @@
 - `ask` answers now name the option a note is on (`m: [X, Y] (note on Y: …)`, `User added note on Y: …`) ([#17126](https://github.com/can1357/oh-my-pi/pull/17126) by [@H4vC](https://github.com/H4vC))
 - `omp` starts faster: the browser's accessibility audit now loads its `axe-core` engine on demand, so a launch no longer pays for it ([#16775](https://github.com/can1357/oh-my-pi/pull/16775) by [@yuzu-octopus](https://github.com/yuzu-octopus))
 - A launch evaluates fewer modules before its first prompt: the `@file` attachment processor, the `--from-claude`/`--from-opencode` resume importer, the python-eval startup probe and the warp-event bridge load on demand, and the extension, custom-tool, custom-command and hook loaders no longer pull the package barrel into the boot graph ([#15224](https://github.com/can1357/oh-my-pi/pull/15224) by [@yuzu-octopus](https://github.com/yuzu-octopus))
+- Resuming a long session is faster: the transcript replay, the compaction notice, Hindsight message extraction and vibe session recovery read only the entry types they need instead of decoding the whole journal, and a pretty-printed record spanning many lines is parsed in near-linear rather than quadratic time
 - Eval `browser` (and other prelude) calls now run extension `tool_call` handlers like regular tool calls, so an extension that blocks or rewrites `browser` calls (for example to point `app.cdp_url` at a per-agent endpoint) also covers calls made from eval
 
 ### Fixed

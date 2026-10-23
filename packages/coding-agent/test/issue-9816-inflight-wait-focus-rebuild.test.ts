@@ -246,6 +246,8 @@ function makeSession(
 		sessionManager: {
 			getCwd: () => process.cwd(),
 			getEntries: () => messages,
+			getEntryCount: () => messages.length,
+			iterateEntries: () => [],
 		},
 	};
 
