@@ -29,6 +29,7 @@
 ### Changed
 
 - Eval `browser` calls run the extension `tool_call` handlers that opt in with `pi.on("tool_call", handler, { evalPreludes: true })`, so an extension that blocks or rewrites `browser` calls (for example to point `app.cdp_url` at a per-agent endpoint) also covers calls made from eval. Handlers that do not opt in never see eval prelude calls, and calls a `browser` approval policy already denies skip the handlers. Other eval preludes are unchanged, and prelude calls get no matching `tool_result` ([#18277](https://github.com/can1357/oh-my-pi/pull/18277) by [@aleister1102](https://github.com/aleister1102))
+- Fixed `eval` cells that spawn or wait on subagents writing multi-megabyte tool results to the session: each subagent progress row copied the full assignment, extracted tool data and recent tool calls, and every status event was stored twice (once for the call, once for its cell). Rows now keep only their one-line fields, with long text cut to 256 characters, and events are stored once per cell; an audit session's 12.5 MB eval result with 269 subagent rows comes to about 0.4 MB ([#18281](https://github.com/can1357/oh-my-pi/pull/18281) by [@aleister1102](https://github.com/aleister1102))
 
 ## [18.17.0] - 2026-11-06
 
