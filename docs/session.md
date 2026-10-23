@@ -602,6 +602,8 @@ The compress phase is opt-in as well: `--compress` or `gc.compress` (default off
 
 Other filesystems report the phase as unsupported.
 
+Before touching any session, the phase probes the chosen method: it compresses a 256 KiB text file in a scratch directory under the sessions root, removes it, and requires the result to allocate less. A volume can pass the filesystem check while its tool stores everything uncompressed (the `ditto` shipped with macOS 27 exits 0 but writes uncompressed copies), and the run would otherwise copy and hash every file for no savings. When the probe fails, a dry run and `--apply` both report `compress: unavailable (<reason>)` and skip the pass. On APFS, only copies that allocate less than their original are hashed. Up to four directory copies run at once, and a run that has compressed nothing stops copying after eight compressed copies that were no smaller than their originals, reporting `compress stopped: …` and how many files it left alone.
+
 Journal payload I/O is streamed during blob-reference scans, archive history/stats reconciliation, gzip creation, and rollback. Active `.jsonl`, recoverable `.jsonl.*.bak`, and archived `.jsonl.gz` records all participate in reference discovery, including references in malformed JSON text. Compressed scans drain and validate the complete stream before their results can authorize deletion. Archives retain the original JSONL bytes when decompressed, and artifact trees keep their existing layout.
 
 Streaming avoids materializing a whole journal; it does not make GC constant-memory. A single long record, reference sets, and history/stats identity collections still consume memory. Original files and temporary compressed output also coexist during archive publication.

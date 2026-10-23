@@ -6,7 +6,13 @@ import * as path from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { withStatsSyncLock } from "@oh-my-pi/omp-stats/aggregator";
 import { type GcResult, runGcCommand } from "@oh-my-pi/pi-coding-agent/cli/gc-cli";
-import { compressMethod } from "@oh-my-pi/pi-coding-agent/cli/gc-compress";
+import {
+	compressCandidate,
+	compressFilesInPlace,
+	compressMethod,
+	createCompressRun,
+	probeCompression,
+} from "@oh-my-pi/pi-coding-agent/cli/gc-compress";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { AgentStorage } from "@oh-my-pi/pi-coding-agent/session/agent-storage";
 import { BlobStore, blobStagingPath } from "@oh-my-pi/pi-coding-agent/session/blob-store";
@@ -2536,8 +2542,12 @@ describe("runGcCommand stale state", () => {
 
 // Test roots live under the temp dir, so its filesystem decides which compression tests run.
 const method = await compressMethod(os.tmpdir());
-const supported = method !== undefined;
-const onApfs = method === "apfs";
+// A volume can support compression while its tool shrinks nothing (the `ditto` shipped with macOS 27),
+// so the tests that need real savings also require the probe to pass.
+const works = method !== undefined && (await probeCompression(os.tmpdir(), method)).unavailable === undefined;
+const supported = works;
+const onApfs = method === "apfs" && works;
+const onApfsVolume = method === "apfs";
 
 describe("runGcCommand session compression", () => {
 	const filler =
@@ -2575,7 +2585,7 @@ describe("runGcCommand session compression", () => {
 		};
 	}
 
-	test.skipIf(supported)("reports the phase unsupported without touching sessions", async () => {
+	test.skipIf(method !== undefined)("reports the phase unsupported without touching sessions", async () => {
 		const { file } = await writeIdleSession(Bun.randomUUIDv7());
 		const before = await snapshot(file);
 
@@ -2583,6 +2593,94 @@ describe("runGcCommand session compression", () => {
 
 		expect(result.compress).toMatchObject({ supported: false, scanned: 0, compressed: 0, errors: [] });
 		expect(await snapshot(file)).toEqual(before);
+	});
+
+	/** A `ditto` that exits 0 and stores uncompressed copies, as the one shipped with macOS 27 does. */
+	async function withUncompressingDitto<T>(fn: () => Promise<T>): Promise<T> {
+		const bin = path.join(root, "fake-bin");
+		await fs.mkdir(bin, { recursive: true });
+		const script = [
+			"#!/bin/sh",
+			"shift # --hfsCompression",
+			"count=$#",
+			"for dest; do :; done",
+			"i=1",
+			'for source in "$@"; do',
+			'  [ "$i" -lt "$count" ] && /bin/cp -p "$source" "$dest"',
+			"  i=$((i + 1))",
+			"done",
+			"",
+		].join("\n");
+		await Bun.write(path.join(bin, "ditto"), script);
+		await fs.chmod(path.join(bin, "ditto"), 0o755);
+		const previous = process.env.PATH;
+		// Only the stub plus the system dirs: a real applesauce on the developer's PATH must not rescue the probe.
+		process.env.PATH = `${bin}:/usr/bin:/bin`;
+		try {
+			return await fn();
+		} finally {
+			process.env.PATH = previous;
+		}
+	}
+
+	test.skipIf(!onApfsVolume)(
+		"reports the phase unavailable, and leaves sessions alone, when ditto stores copies uncompressed",
+		async () => {
+			const { file, artifact } = await writeIdleSession(Bun.randomUUIDv7());
+			const before = await Promise.all([snapshot(file), snapshot(artifact)]);
+
+			const [dryRun, applied] = await withUncompressingDitto(async () => [
+				await runGcCommand({ flags: { agentDir: root, compress: true } }),
+				await runGcCommand({ flags: { agentDir: root, compress: true, apply: true } }),
+			]);
+
+			for (const result of [dryRun, applied]) {
+				expect(result.compress).toMatchObject({
+					supported: true,
+					method: "apfs",
+					unavailable: expect.stringContaining("did not shrink"),
+					scanned: 0,
+					wouldCompress: 0,
+					compressed: 0,
+					errors: [],
+				});
+			}
+			expect(writes.join("")).toContain("compress: unavailable (ditto --hfsCompression did not shrink");
+			expect(await Promise.all([snapshot(file), snapshot(artifact)])).toEqual(before);
+			const leftovers = (await fs.readdir(getSessionsDir(root), { recursive: true })).filter(name =>
+				path.basename(name).startsWith(".omp-gc-compress-"),
+			);
+			expect(leftovers).toEqual([]);
+		},
+	);
+
+	test.skipIf(!onApfsVolume)("stops copying once a run has tried several copies and none shrank", async () => {
+		const files: string[] = [];
+		for (const dir of ["a", "b", "c", "d"]) {
+			for (const name of ["1", "2", "3", "4"]) {
+				const file = path.join(root, "bulk", dir, `${name}.log`);
+				await fs.mkdir(path.dirname(file), { recursive: true });
+				await Bun.write(file, filler);
+				await agePathSubMs(file, 30);
+				files.push(file);
+			}
+		}
+		const candidates = (await Promise.all(files.map(file => compressCandidate(file)))).filter(
+			candidate => candidate !== undefined,
+		);
+		const before = await Promise.all(files.map(snapshot));
+
+		// One copy slot makes the directory order deterministic: 8 futile copies stop the run.
+		const run = createCompressRun(1);
+		const result = await withUncompressingDitto(() => compressFilesInPlace(candidates, "apfs", new Set(), run));
+
+		expect(result).toMatchObject({ compressed: 0, skipped: 8, errors: [] });
+		expect(run.stopped).toBeDefined();
+		expect(await Promise.all(files.map(snapshot))).toEqual(before);
+		for (const dir of ["a", "b", "c", "d"]) {
+			const names = await fs.readdir(path.join(root, "bulk", dir));
+			expect(names.filter(name => name.startsWith(".omp-gc-compress-"))).toEqual([]);
+		}
 	});
 
 	test.skipIf(!supported)("--apply stores an idle session compressed with identical bytes and mtimes", async () => {

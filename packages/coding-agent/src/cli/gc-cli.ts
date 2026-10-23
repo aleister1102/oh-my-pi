@@ -32,11 +32,14 @@ import { parseTerminalBreadcrumb } from "../session/session-paths";
 import { readSessionHeaderId } from "../session/session-loader";
 import { FileSessionStorage, SESSION_STAGING_RE, tryAcquireSessionLease } from "../session/session-storage";
 import {
+	COMPRESS_CONCURRENCY,
 	type CompressCandidate,
 	type CompressMethod,
 	compressCandidate,
 	compressFilesInPlace,
 	compressMethod,
+	createCompressRun,
+	probeCompression,
 	sweepCompressScratch,
 } from "./gc-compress";
 import {
@@ -175,6 +178,12 @@ export interface CompressGcResult {
 	allocatedAfter: number;
 	/** Scratch directories a killed run left behind; removed with `--apply`. */
 	leftoverScratchDirs: number;
+	/** Why the pass was skipped though the filesystem supports compression: the method did not shrink a probe file. */
+	unavailable?: string;
+	/** Why `--apply` stopped copying part-way: nothing shrank. Later files were left alone. */
+	stopped?: string;
+	/** Files left alone after the run stopped. */
+	skippedAfterStop: number;
 	errors: string[];
 }
 
@@ -1960,6 +1969,7 @@ async function runCompressGc(options: ResolvedGcOptions, archiveRoot: string): P
 		bytes: 0,
 		allocatedBefore: 0,
 		allocatedAfter: 0,
+		skippedAfterStop: 0,
 		leftoverScratchDirs: 0,
 		errors: [],
 	};
@@ -1974,9 +1984,19 @@ async function runCompressGc(options: ResolvedGcOptions, archiveRoot: string): P
 			result.errors,
 		);
 	}
+	// A volume can report support while its tool stores everything uncompressed (macOS 27's
+	// `ditto --hfsCompression`); the pass would then copy every file for no savings.
+	const probe = await probeCompression(sessionsRoot, method);
+	if (probe.unavailable !== undefined) {
+		result.unavailable = probe.unavailable;
+		return result;
+	}
 	const sessions = await listActiveSessions(sessionsRoot);
 	result.scanned = sessions.length;
 	const cutoffMs = Date.now() - Math.max(options.compressAfterDays * DAY_MS, GC_WRITE_GRACE_MS);
+	const run = createCompressRun(COMPRESS_CONCURRENCY, probe.tool);
+	// Sessions compress concurrently; `run` caps the directory copies in flight across all of them.
+	const inFlight = new Set<Promise<void>>();
 	for (const session of sessions) {
 		if (session.modified.getTime() > cutoffMs) continue;
 		let files: string[];
@@ -2009,18 +2029,37 @@ async function runCompressGc(options: ResolvedGcOptions, archiveRoot: string): P
 				result.bytes += candidate.bytes;
 				result.allocatedBefore += candidate.allocated;
 			}
-			if (!options.apply) continue;
-			const batch = await compressFilesInPlace(candidates, method, tree.transcripts);
-			result.compressed += batch.compressed;
-			result.allocatedAfter += batch.allocatedAfter;
-			result.errors.push(...batch.errors);
+			if (!options.apply) {
+				for (const held of tree.leases) held.release();
+				continue;
+			}
 		} catch (error) {
 			result.errors.push(`${session.path}: ${errorMessage(error)}`);
-		} finally {
-			// Held through the rewrite so no omp process resumes the session mid-swap.
 			for (const held of tree?.leases ?? []) held.release();
+			continue;
 		}
+		const leases = tree.leases;
+		const transcripts = tree.transcripts;
+		const task: Promise<void> = (async () => {
+			try {
+				const batch = await compressFilesInPlace(candidates, method, transcripts, run);
+				result.compressed += batch.compressed;
+				result.allocatedAfter += batch.allocatedAfter;
+				result.skippedAfterStop += batch.skipped;
+				result.errors.push(...batch.errors);
+			} catch (error) {
+				result.errors.push(`${session.path}: ${errorMessage(error)}`);
+			} finally {
+				// Held through the rewrite so no omp process resumes the session mid-swap.
+				for (const held of leases) held.release();
+			}
+		})();
+		inFlight.add(task);
+		void task.finally(() => inFlight.delete(task));
+		if (inFlight.size >= COMPRESS_CONCURRENCY) await Promise.race(inFlight);
 	}
+	await Promise.all(inFlight);
+	result.stopped = run.stopped;
 	return result;
 }
 
@@ -2291,11 +2330,21 @@ function renderText(result: GcResult): string {
 		const compress = result.compress;
 		if (!compress.supported) {
 			lines.push("compress: unsupported on this filesystem (APFS or NTFS only)");
+		} else if (compress.unavailable !== undefined) {
+			lines.push(`compress: unavailable (${compress.unavailable})`);
+			if (compress.leftoverScratchDirs > 0) {
+				const verb = result.apply ? "removed" : "found";
+				lines.push(`compress leftover scratch dirs ${verb}: ${compress.leftoverScratchDirs}`);
+			}
+			if (compress.errors.length > 0) lines.push(`compress errors: ${compress.errors.length}`);
 		} else {
 			const after = result.apply ? `, ${formatBytes(compress.allocatedAfter)} after` : "";
 			lines.push(
 				`compress: ${compress.compressed}/${compress.wouldCompress} files in ${compress.sessions} sessions, ${formatBytes(compress.allocatedBefore)} on disk before${after}`,
 			);
+			if (compress.stopped !== undefined) {
+				lines.push(`compress stopped: ${compress.stopped}; ${compress.skippedAfterStop} files left alone`);
+			}
 			if (compress.skippedLive > 0) lines.push(`compress skipped live: ${compress.skippedLive}`);
 			if (compress.leftoverScratchDirs > 0) {
 				const verb = result.apply ? "removed" : "found";
