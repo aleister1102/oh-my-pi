@@ -27,7 +27,12 @@ static SPELLING_THREAD: LazyLock<flume::Sender<Job>> = LazyLock::new(|| {
 		.name("pi-native-spelling".into())
 		.spawn(move || {
 			while let Ok(job) = receiver.recv() {
-				job();
+				// A detached thread has no autorelease pool of its own: without one
+				// per job, every autoreleased AppKit/XPC object a
+				// spelling call creates (spell-server proxies, results,
+				// data buffers) lives until the thread exits, i.e. for
+				// the whole process lifetime.
+				objc2::rc::autoreleasepool(|_| job());
 			}
 		})
 		.expect("failed to spawn the native spelling thread");
@@ -150,8 +155,8 @@ fn strings(values: Option<Retained<NSArray<NSString>>>) -> Vec<String> {
 /// uses.
 fn orthography(checker: &NSSpellChecker, text: &NSString) -> Option<Retained<NSOrthography>> {
 	let full = NSRange { location: 0, length: text.length() };
-	// SAFETY: the arguments match the documented nil options, tag, and word-count
-	// usage.
+	// SAFETY: the arguments match the documented nil options, tag, and
+	// word-count usage.
 	let results = unsafe {
 		checker.checkString_range_types_options_inSpellDocumentWithTag_orthography_wordCount(
 			text,
