@@ -752,7 +752,6 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 
 			const tailBuffer = new TailBuffer(DEFAULT_MAX_BYTES * 2);
 			const images: ImageContent[] = [];
-			const callStatus: StatusEventLog = {};
 
 			const cellResults: EvalCellResult[] = cells.map(cell => ({
 				index: cell.index,
@@ -783,10 +782,6 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 				};
 				if (images.length > 0) {
 					details.images = images;
-				}
-				if (callStatus.statusEvents) {
-					details.statusEvents = callStatus.statusEvents;
-					details.statusEventsElided = callStatus.statusEventsElided;
 				}
 				if (notice) {
 					details.notice = notice;
@@ -957,7 +952,7 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 									: undefined,
 							),
 						};
-						recordStatusEvent(callStatus, event);
+						// Kept on the cell only: a call-level copy doubled every persisted event.
 						recordStatusEvent(cellStatus, event);
 					}
 				}
@@ -997,8 +992,6 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 						language: languages[0],
 						languages,
 						cells: cellResults,
-						statusEvents: callStatus.statusEvents,
-						statusEventsElided: callStatus.statusEventsElided,
 						isError: true,
 					};
 					if (notice) details.notice = notice;
@@ -1028,8 +1021,6 @@ export class EvalTool implements AgentTool<typeof evalSchema> {
 				language: languages[0],
 				languages,
 				cells: cellResults,
-				statusEvents: callStatus.statusEvents,
-				statusEventsElided: callStatus.statusEventsElided,
 			};
 			if (notice) details.notice = notice;
 
