@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import * as nodeFs from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -33,11 +34,15 @@ const expectedFixtureSkillOrder: string[] = [
 /**
  * Disable every named built-in skill source. Used by `loadSkills` option tests
  * that need to isolate a custom directory or assert "no built-in leakage".
- * Plugin providers (`omp-plugins`, `claude-plugins`, `agent-plugins`) have no
- * toggle; the file-wide isolated home below keeps the developer's real plugin
- * installs out of every assertion.
+ * The structured flags cover only the built-in sources. Plugin providers
+ * (`omp-plugins`, `claude-plugins`, `agent-plugins`) have no toggle, and
+ * `loadSkills` defaults `cwd` to the real repo, whose gitignored `.omp/plugins`
+ * installs would leak into every assertion. `cwd` therefore points at an empty
+ * temp project, and the isolated home below covers user-level installs.
  */
+const isolatedProjectDir = nodeFs.mkdtempSync(path.join(os.tmpdir(), "pi-skills-project-"));
 const DISABLE_ALL_BUILTIN_SKILLS = {
+	cwd: isolatedProjectDir,
 	enableCodexUser: false,
 	enableClaudeUser: false,
 	enableClaudeProject: false,
@@ -89,6 +94,7 @@ afterAll(async () => {
 	isolateHomedir().mockRestore();
 	__resetDirsFromEnvForTests();
 	await removeWithRetries(isolatedHome);
+	await removeWithRetries(isolatedProjectDir);
 });
 
 describe("skills", () => {

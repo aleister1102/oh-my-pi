@@ -537,7 +537,7 @@ async function elicitFormFromAcpClient(
 			} catch (error) {
 				// A throwing `onTimeout` must not leave the elicitation promise
 				// pending — settle it via `finish` below regardless.
-				logger.warn("ACP elicitation onTimeout threw", { sessionId, method, error });
+				logger.warn("ACP elicitation onTimeout threw", { acpSessionId: sessionId, method, error });
 			}
 			finish(undefined);
 		}, dialogOptions.timeout);
@@ -561,7 +561,7 @@ async function elicitFormFromAcpClient(
 		.then(finish, error => {
 			// Caller may already have moved on via abort/timeout; suppress noise.
 			if (settled) return;
-			logger.warn("ACP elicitation failed", { sessionId, method, error });
+			logger.warn("ACP elicitation failed", { acpSessionId: sessionId, method, error });
 			finish(undefined);
 		});
 	const response = await promise;
@@ -647,7 +647,9 @@ export function createAcpExtensionUiContext(
 			return typeof value === "boolean" ? value : false;
 		},
 		input: async (title, placeholder, dialogOptions) => {
-			if (!supportsForm) return undefined;
+			// ACP form-mode elicitation has no masked/password field and the ACP spec
+			// forbids falling back to form mode for secrets or credentials.
+			if (!supportsForm || dialogOptions?.secret) return undefined;
 			const value = await elicitFromAcpClient(
 				connection,
 				getSessionId(),
@@ -747,16 +749,18 @@ export function createAcpExtensionUiContext(
 		notify: (message, type) => {
 			logger.debug("ACP extension notification", { message, type });
 		},
-		onTerminalInput: () => () => { },
-		setStatus: () => { },
-		setWorkingMessage: () => { },
-		setWidget: () => { },
-		setFooter: () => { },
-		setHeader: () => { },
-		setTitle: () => { },
+		onTerminalInput: () => () => {},
+		rerenderMessage: () => {},
+		getLinkClicksAvailable: () => false,
+		setStatus: () => {},
+		setWorkingMessage: () => {},
+		setWidget: () => {},
+		setFooter: () => {},
+		setHeader: () => {},
+		setTitle: () => {},
 		custom: async () => undefined as never,
-		pasteToEditor: () => { },
-		setEditorText: () => { },
+		pasteToEditor: () => {},
+		setEditorText: () => {},
 		getEditorText: () => "",
 		editor: async (title, prefill, dialogOptions) => {
 			if (!supportsForm) return undefined;
@@ -770,8 +774,8 @@ export function createAcpExtensionUiContext(
 			);
 			return typeof value === "string" ? value : undefined;
 		},
-		addAutocompleteProvider: () => { },
-		setEditorComponent: () => { },
+		addAutocompleteProvider: () => {},
+		setEditorComponent: () => {},
 		getEditorComponent: () => undefined,
 		get theme() {
 			return theme;
@@ -780,7 +784,7 @@ export function createAcpExtensionUiContext(
 		getTheme: async () => undefined,
 		setTheme: async () => ({ success: false, error: "Theme changes are unavailable in ACP mode" }),
 		getToolsExpanded: () => false,
-		setToolsExpanded: () => { },
+		setToolsExpanded: () => {},
 	};
 }
 
@@ -1024,7 +1028,7 @@ export class AcpAgent implements Agent {
 			// the same cleanup rejection and fails accordingly.
 			this.#beginCancelCleanup(record, activeTurn).catch(async (error: unknown) => {
 				logger.warn("ACP cancel cleanup timed out; closing session", {
-					sessionId: record.session.sessionId,
+					acpSessionId: record.session.sessionId,
 					error,
 				});
 				await this.#closeManagedSession(params.sessionId, record);
@@ -1099,9 +1103,9 @@ export class AcpAgent implements Agent {
 						undefined,
 						error instanceof AgentBusyError
 							? RequestError.sessionBusy(error.message, {
-								reason: "session_busy",
-								hint: "steer|followUp|wait",
-							})
+									reason: "session_busy",
+									hint: "steer|followUp|wait",
+								})
 							: error,
 					);
 				});
@@ -1270,7 +1274,7 @@ export class AcpAgent implements Agent {
 				stopReason: "end_turn",
 				usage: this.#buildTurnUsage(
 					promptTurn?.usageBaseline ??
-					this.#cloneUsageStatistics(record.session.sessionManager.getUsageStatistics()),
+						this.#cloneUsageStatistics(record.session.sessionManager.getUsageStatistics()),
 					record.session.sessionManager.getUsageStatistics(),
 				),
 			});
@@ -1306,7 +1310,7 @@ export class AcpAgent implements Agent {
 		if (skills.length === 0) {
 			return false;
 		}
-		const built = await buildSkillPromptMessage(skills, parsed, "user");
+		const built = await buildSkillPromptMessage(skills, parsed, "user", record.session);
 		await record.session.promptCustomMessage(
 			{
 				customType: SKILL_PROMPT_MESSAGE_TYPE,
@@ -1364,7 +1368,10 @@ export class AcpAgent implements Agent {
 		try {
 			await Promise.race([record.session.abort({ reason: USER_INTERRUPT_LABEL }), timeoutGate.promise]);
 		} catch (error: unknown) {
-			logger.warn("ACP cancel cleanup timed out; closing session", { sessionId: record.session.sessionId, error });
+			logger.warn("ACP cancel cleanup timed out; closing session", {
+				acpSessionId: record.session.sessionId,
+				error,
+			});
 			await this.#closeManagedSession(record.session.sessionId, record);
 		} finally {
 			clearTimeout(timer);
@@ -1573,7 +1580,7 @@ export class AcpAgent implements Agent {
 		return { outcome: "injected", queue };
 	}
 
-	async extNotification(_method: string, _params: { [key: string]: unknown }): Promise<void> { }
+	async extNotification(_method: string, _params: { [key: string]: unknown }): Promise<void> {}
 
 	get signal(): AbortSignal {
 		return this.#connection.signal;
@@ -1748,7 +1755,7 @@ export class AcpAgent implements Agent {
 			await delivery;
 		} catch (error) {
 			logger.warn("Failed to push config_option_update after a lifetime event", {
-				sessionId: record.session.sessionId,
+				acpSessionId: record.session.sessionId,
 				eventType: event.type,
 				error,
 			});
@@ -2328,7 +2335,7 @@ export class AcpAgent implements Agent {
 			});
 		} catch (error) {
 			logger.warn("Failed to autosave approved plan", {
-				sessionId: session.sessionId,
+				acpSessionId: session.sessionId,
 				error,
 			});
 			autosaveFailed = true;
@@ -2341,7 +2348,7 @@ export class AcpAgent implements Agent {
 			await this.#pushConfigOptionUpdateForSession(session);
 		} catch (error) {
 			logger.warn("Failed to emit mode updates after plan approval", {
-				sessionId: session.sessionId,
+				acpSessionId: session.sessionId,
 				error,
 			});
 		}
@@ -3017,7 +3024,7 @@ export class AcpAgent implements Agent {
 					void record.session.abort({ reason: USER_INTERRUPT_LABEL });
 				},
 				hasPendingMessages: () => record.session.queuedMessageCount > 0,
-				shutdown: () => { },
+				shutdown: () => {},
 				getContextUsage: () => record.session.getContextUsage(),
 				getSystemPrompt: () => record.session.systemPrompt,
 				runEphemeralTurn: args => record.session.runEphemeralTurn(args),
@@ -3101,7 +3108,7 @@ export class AcpAgent implements Agent {
 		};
 		manager.setOnToolsChanged(() => {
 			// Failures are logged once via the stored chain's catch above.
-			enqueueMcpToolsRefresh().catch(() => { });
+			enqueueMcpToolsRefresh().catch(() => {});
 		});
 		const configs: MCPConfigMap = {};
 		const sources: MCPSourceMap = {};
@@ -3234,7 +3241,7 @@ export class AcpAgent implements Agent {
 						await this.#cancelPromptForClose(record);
 						await this.#disposeSessionRecord(record, reason);
 					} catch (error) {
-						logger.warn("Failed to clean up ACP session", { sessionId, error });
+						logger.warn("Failed to clean up ACP session", { acpSessionId: sessionId, error });
 					}
 				}),
 			);

@@ -1,9 +1,3 @@
-/**
- * A finished subagent must leave memory on its own shortly after it goes idle:
- * the default `task.agentIdleTtlMs` parks it (session disposed, JSONL kept)
- * within seconds, so a long session that spawns many subagents does not keep
- * every finished one live for minutes.
- */
 import { afterEach, beforeEach, expect, it, vi } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -76,7 +70,7 @@ function parkedWithin(id: string, deadlineMs: number): Promise<boolean> {
 	});
 }
 
-it("parks a finished subagent within seconds under the default idle TTL", async () => {
+it("parks a finished subagent after its configured idle TTL and keeps it available for revival", async () => {
 	const cwd = path.join(root, "work");
 	const artifactsDir = path.join(root, "artifacts");
 	await fs.mkdir(cwd, { recursive: true });
@@ -105,8 +99,8 @@ it("parks a finished subagent within seconds under the default idle TTL", async 
 			modelOverride: "mock/mock-model",
 			authStorage,
 			modelRegistry,
-			// `task.agentIdleTtlMs` is left at its default.
 			settings: Settings.isolated({
+				"task.agentIdleTtlMs": 5000,
 				"async.enabled": false,
 				"compaction.enabled": false,
 				"retry.enabled": false,

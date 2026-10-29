@@ -7,7 +7,7 @@
 import * as fs from "node:fs/promises";
 import path from "node:path";
 import type { AgentEvent, AgentIdentity, AgentMessage, AgentTelemetryConfig } from "@oh-my-pi/pi-agent-core";
-import { AgentBusyError, EventLoopKeepalive, recordHandoff, resolveTelemetry } from "@oh-my-pi/pi-agent-core";
+import { AgentBusyError, recordHandoff, resolveTelemetry } from "@oh-my-pi/pi-agent-core";
 import type { Api, Model, ServiceTierByFamily, Usage } from "@oh-my-pi/pi-ai";
 import { isCursorExecResolved } from "@oh-my-pi/pi-ai/utils/block-symbols";
 import { isRecord, logger, popLoopPhase, prompt, pushLoopPhase, sanitizeText, untilAborted } from "@oh-my-pi/pi-utils";
@@ -2447,7 +2447,6 @@ async function driveSessionToResult(
 ): Promise<DriveOutcome> {
 	const { solutionSpace, onPromptBusy, restore } = options;
 	const structured = options.structured !== false;
-	using _keepalive = new EventLoopKeepalive();
 	const abortSignal = monitor.abortSignal;
 	let exitCode = 0;
 	let error: string | undefined;
@@ -3071,7 +3070,13 @@ function wakeSources(records: AgentMessage[], selfId: string): WakeSource[] {
 		// back would ping-pong two idle peers forever. A broadcast leg is not one
 		// either: it asks no one in particular, so relaying every woken peer's
 		// turn back would flood the broadcaster with "not for me" replies.
-		if (details && (Reflect.get(details, "wakeRelay") === true || Reflect.get(details, "broadcast") === true))
+		// A progress note promises a later answer and asks nothing back.
+		if (
+			details &&
+			(Reflect.get(details, "wakeRelay") === true ||
+				Reflect.get(details, "broadcast") === true ||
+				Reflect.get(details, "progress") === true)
+		)
 			continue;
 		const messageId = details ? Reflect.get(details, "id") : undefined;
 		sources.push({ from, messageId: typeof messageId === "string" ? messageId : undefined });
@@ -3466,14 +3471,22 @@ export function attachIrcWakeTurnMonitor(session: AgentSession, options: IrcWake
 				// Once registered, the wake job carries this turn's outcome to the
 				// parent whatever it is: the yield result, the failure that
 				// superseded it, or, for a turn that never yielded, the answer a
-				// relay would have carried.
+				// relay would have carried. `agentOutputPublished` tells the
+				// delivery whether this turn wrote `<id>.md`: a turn that neither
+				// yielded nor produced a message result leaves the previous turn's
+				// output there, which `agent://<id>` must not be offered for.
+				const outputPublished = result?.outputPath !== undefined;
 				if (wakeJob && (yielded || messageResult) && result) {
 					const text = formatTaskResultSummary(result, { totalDurationMs: result.durationMs });
 					const structured = result.structuredOutput;
 					if (result.aborted || result.exitCode !== 0 || result.error !== undefined) {
 						wakeJob.outcome.reject(new AsyncJobError(text, structured));
 					} else {
-						wakeJob.outcome.resolve(structured ? { text, structured } : { text });
+						wakeJob.outcome.resolve({
+							text,
+							agentOutputPublished: outputPublished,
+							...(structured ? { structured } : {}),
+						});
 					}
 				} else if (wakeJob && yielded) {
 					const message = finalizeError instanceof Error ? finalizeError.message : String(finalizeError);
@@ -3490,7 +3503,7 @@ export function attachIrcWakeTurnMonitor(session: AgentSession, options: IrcWake
 						alreadyMessaged: IrcBus.global().sentSince(id, wakeJob.ownerId, turnStartTime),
 					});
 					if (wakeTurnFailed(outcome)) wakeJob.outcome.reject(new Error(text));
-					else wakeJob.outcome.resolve({ text });
+					else wakeJob.outcome.resolve({ text, agentOutputPublished: outputPublished });
 				}
 				// Unconditional: a failed, cancelled, empty, or even un-finalized
 				// wake turn must still tell whoever woke it, or a `send await:true`
@@ -3947,15 +3960,17 @@ function buildSubagentSessionOptions(
 		resolveServiceTierByFamily: launch?.resolveServiceTierByFamily,
 		onFirstChatDispatch: launch?.onFirstChatDispatch,
 		systemPrompt: defaultPrompt => {
-			// A revive shows the roster the parked session's prompt held, as the cached prompt prefix
-			// does: a live one would make every revival a cache miss for a change it would not have
-			// seen had it stayed live.
-			const ircRoster =
-				inputs.reviving && inputs.ircRoster
+			// A revive shows the roster the parked session's prompt held, and a rebuild that leaves the
+			// rest of the prompt unchanged keeps the roster the prompt it replaces showed: peer rows carry
+			// each peer's live activity, so a re-collected roster changed the prompt's bytes on every such
+			// rebuild and the provider wrote the whole conversation to its prompt cache again. A rebuild
+			// whose default blocks changed loses the cached prefix anyway, so it catches the roster up.
+			const ircRoster = !inputs.ircEnabled
+				? undefined
+				: inputs.reviving && inputs.ircRoster
 					? inputs.ircRoster
-					: inputs.ircEnabled
-						? collectIrcPeerRoster(AgentRegistry.global(), inputs.id, inputs.ircRoot.sessionFile)
-						: undefined;
+					: (heldIrcRoster(inputs, defaultPrompt) ??
+						collectIrcPeerRoster(AgentRegistry.global(), inputs.id, inputs.ircRoot.sessionFile));
 			const subagentPrompt = prompt.render(subagentSystemPromptTemplate, {
 				agent: inputs.agentSystemPrompt,
 				context: inputs.context,
@@ -3985,6 +4000,18 @@ function buildSubagentSessionOptions(
 			return [...defaultPrompt, subagentPrompt, ...(seancePrompt ? [seancePrompt] : [])];
 		},
 	};
+}
+
+/**
+ * The roster the live session's base prompt shows, when that prompt starts with `defaultPrompt`:
+ * reusing it then keeps the whole prompt byte-identical. `undefined` before the first render or
+ * when the default blocks changed.
+ */
+function heldIrcRoster(inputs: SubagentPromptInputs, defaultPrompt: readonly string[]): IrcPeerRosterData | undefined {
+	const held = AgentRegistry.global().get(inputs.id)?.session?.baseSystemPrompt;
+	if (!held || held.length <= defaultPrompt.length) return undefined;
+	if (defaultPrompt.some((block, index) => held[index] !== block)) return undefined;
+	return held.map(block => inputs.ircRenders.get(block)).find(roster => roster !== undefined);
 }
 
 /** Remembers the roster `block` shows, dropping blocks the live session's base prompt no longer holds. */
@@ -4134,15 +4161,37 @@ function createWarmSubagentReviver(capture: WarmReviveCapture): AgentReviver {
 		// dispatch and persisted revival do, never the spawn-time copy.
 		const agentAccountPools = validateAgentAccountPools(cfgTaskAgentAccountPools.get(capture.settings.parent));
 		capture.spec.prompt.reviving = true;
+		// A session-local switch since spawn (a prewalk handoff) owns the model and effort: the
+		// transcript restores the effort, and the spawn selection only backs the model up when it is
+		// unavailable. The spawn's prewalk stays configured; the coordinator sees it was spent. A seance
+		// fork's selections belong to its source run, never to the consult.
+		const sessionLocalModel = capture.spec.preparedSession ? undefined : reopened.getSessionLocalModelChange()?.model;
 		try {
 			try {
+				const options = buildSubagentSessionOptions(
+					capture.spec,
+					restoreSubagentSettings(capture.settings),
+					reopened,
+					expectedAgentRef,
+				);
 				({ session: revived } = await createAgentSession({
-					...buildSubagentSessionOptions(
-						capture.spec,
-						restoreSubagentSettings(capture.settings),
-						reopened,
-						expectedAgentRef,
-					),
+					...options,
+					...(sessionLocalModel
+						? {
+								model: undefined,
+								modelPattern: [
+									sessionLocalModel,
+									...(options.model
+										? [formatModelStringWithRouting(options.model)]
+										: options.modelPattern === undefined
+											? []
+											: [options.modelPattern].flat()),
+								],
+								modelPatternFallbackRole: undefined,
+								modelPatternDefaultFallbackChain: undefined,
+								thinkingLevel: undefined,
+							}
+						: undefined),
 					oauthAccountPools: Object.hasOwn(agentAccountPools, capture.agentName)
 						? agentAccountPools[capture.agentName]
 						: undefined,
@@ -4961,13 +5010,13 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 			// Autoload skills via sendCustomMessage (same mechanic as /skill:<name>)
 			if (options.autoloadSkills?.length) {
 				for (const skill of options.autoloadSkills) {
-					const { message } = await buildSkillPromptMessage([skill], { args: "" }, "autoload");
+					const { message, details } = await buildSkillPromptMessage(skill, { args: "" }, "autoload", session);
 					await session.sendCustomMessage(
 						{
 							customType: SKILL_PROMPT_MESSAGE_TYPE,
 							content: message,
 							display: false,
-							details: { name: skill.name, path: skill.filePath },
+							details: { name: details.name, path: details.path },
 						},
 						{ triggerTurn: false },
 					);

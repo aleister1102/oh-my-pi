@@ -27,7 +27,6 @@ import type {
 import { resolveApiKeyOnce } from "@oh-my-pi/pi-ai/auth-retry";
 import type { DiscoverAuthStorageOptions } from "@oh-my-pi/pi-ai/auth-broker/discover";
 import type { Dialect } from "@oh-my-pi/pi-ai/dialect";
-import { prewarmOpenAICodexResponses } from "@oh-my-pi/pi-ai/providers/openai-codex-responses";
 import { prewarmModelConnection } from "@oh-my-pi/pi-ai/providers/connection-prewarm";
 import { isOpenAICodexWebSocketPreferred } from "@oh-my-pi/pi-ai/providers/openai-codex-transport";
 import { withCredentialRedaction } from "@oh-my-pi/pi-ai/providers/transform-messages";
@@ -74,6 +73,7 @@ import {
 	type ModelMatchPreferences,
 	parseModelPattern,
 	pickDefaultAvailableModel,
+	providerModelHint,
 	resolveAllowedModels,
 	resolveCliModel,
 	type ResolveCliModelResult,
@@ -145,9 +145,9 @@ import {
 } from "./extensibility/skills";
 import { type FileSlashCommand, loadSlashCommands as loadSlashCommandsInternal } from "./extensibility/slash-commands";
 import type { HindsightSessionState } from "./hindsight/state";
-import { LocalProtocolHandler, type LocalProtocolOptions } from "./internal-urls";
+import { LocalProtocolHandler, type LocalProtocolOptions, outRepliesActive } from "./internal-urls";
 import { stripXdUrlPrefix } from "@oh-my-pi/pi-tui/tools/xd-url";
-import { setSharedLspEnabled } from "./lsp/client";
+import { holdSharedLsp } from "./lsp/client";
 import { LSP_STARTUP_EVENT_CHANNEL, type LspStartupEvent } from "./lsp/startup-events";
 import {
 	deduplicateMCPToolsByName,
@@ -954,6 +954,14 @@ export interface CreateAgentSessionOptions {
 	autoApprove?: boolean;
 }
 
+/** Saved models were exhausted without permission to substitute another model. */
+export class SessionModelRestoreError extends Error {
+	constructor(modelSelector: string) {
+		super(`Could not restore model ${modelSelector}`);
+		this.name = "SessionModelRestoreError";
+	}
+}
+
 /** Result from createAgentSession */
 export interface CreateAgentSessionResult {
 	/** The created session */
@@ -1166,9 +1174,7 @@ export async function loadCliExtensionProviders(
 	const extensionsResult = await loadSessionExtensions(options, cwd, settings, eventBus);
 	const activeSources = extensionsResult.extensions.map(extension => extension.path);
 	modelRegistry.syncExtensionSources(activeSources);
-	for (const sourceId of new Set(activeSources)) {
-		modelRegistry.clearSourceRegistrations(sourceId);
-	}
+	modelRegistry.clearSourceRegistrations(new Set(activeSources));
 	for (const { name, config, sourceId } of extensionsResult.runtime.pendingProviderRegistrations) {
 		modelRegistry.registerProvider(name, config, sourceId);
 	}
@@ -2184,6 +2190,25 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 		// Anthropic); others warm once a request has revealed their real origin.
 		// Every mode benefits (interactive, print, rpc, acp).
 		void prewarmModelConnection(model);
+		// Usage-aware credential selection may need a cold remote usage report.
+		// Start only that metadata read while tools/extensions/context are loading;
+		// the selector owns eligibility and still chooses/pins the account at request
+		// time. A preliminary model can change after extensions register, so this
+		// must never validate or commit credentials for it.
+		void logger
+			.time("prefetchCredentialUsage", () =>
+				modelRegistry.authStorage.keys.prefetchUsage(resolvedModel.provider, providerSessionId, {
+					baseUrl: resolvedModel.baseUrl,
+					modelId: resolvedModel.id,
+					accountIds: resolvedModel.accountAccess && Object.keys(resolvedModel.accountAccess),
+				}),
+			)
+			.catch(error => {
+				logger.debug("Startup credential usage prefetch failed", {
+					provider: resolvedModel.provider,
+					error: String(error),
+				});
+			});
 	}
 
 	// Re-derives the thinking level whenever startup settles on a different
@@ -2394,6 +2419,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			canPromptUser: options.interactivePrompts ?? options.hasUI ?? false,
 			advertiseHeadlessAsk: options.advertiseHeadlessAsk,
 			settingsApproval: options.settingsApproval === true && !isSubagentSession,
+			tuiTranscript,
 			// Explicit resolvers retain their existing pass-through contract. Ordinary
 			// sessions inherit stored affinity into the child's own provider session.
 			getApiKey: options.getApiKey,
@@ -2436,6 +2462,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 				return session?.skills ?? skills;
 			},
 			refreshSkills: () => session.refreshSkills(),
+			skillRediscoveryHost: () => session.skillRediscoveryHost(),
 			rules: allRules,
 			activeRules: [...rulebookRules, ...alwaysApplyRules, ...ttsrManager.getRules()],
 			eventBus,
@@ -2801,6 +2828,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			extensionsResult = {
 				...options.preloadedExtensions,
 				extensions: [...options.preloadedExtensions.extensions],
+				preparedExtensions: options.preloadedExtensions.preparedExtensions?.slice(),
 			};
 			// Capture paths for downstream forwarding; filter inline-factory
 			// entries (`<inline-N>`) — those are per-session, not source paths.
@@ -2886,9 +2914,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 		if (!restrictToolNames) {
 			const activeExtensionSources = extensionsResult.extensions.map(extension => extension.path);
 			modelRegistry.syncExtensionSources(activeExtensionSources);
-			for (const sourceId of new Set(activeExtensionSources)) {
-				modelRegistry.clearSourceRegistrations(sourceId);
-			}
+			modelRegistry.clearSourceRegistrations(new Set(activeExtensionSources));
 		}
 		if (extensionsResult.runtime.pendingProviderRegistrations.length > 0) {
 			for (const { name, config, sourceId } of extensionsResult.runtime.pendingProviderRegistrations) {
@@ -2978,7 +3004,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			restoredSessionModelIndex < 0 &&
 			(!options.hasUI || options.allowSessionModelFallback === false || !cfgRetryModelFallback.get(settings))
 		) {
-			throw new Error(`Could not restore model ${sessionModelStrings[0]}`);
+			throw new SessionModelRestoreError(sessionModelStrings[0]);
 		}
 		// Resolve deferred --model/subagent patterns now that extension models are
 		// registered. Use the same CLI resolver as the immediate path so bare role
@@ -3284,7 +3310,11 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 					deferredModelPatterns.length === 1
 						? `"${deferredModelPatterns[0]}"`
 						: `one of ${deferredModelPatterns.map(pattern => `"${pattern}"`).join(", ")}`;
-				modelFallbackMessage = `Model ${requested} not found`;
+				// A single provider-qualified selector names its closest siblings, the same
+				// hint `resolveCliModel` gives before the selector was deferred here.
+				const hint =
+					deferredModelPatterns.length === 1 ? providerModelHint(deferredModelPatterns[0], allEnabledModels) : "";
+				modelFallbackMessage = `Model ${requested} not found${hint ? `.${hint}` : ""}`;
 			}
 		}
 
@@ -3435,6 +3465,24 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 				if (!model && !tryResolveDefaultRoleFallback(fallbackCandidates) && pick) {
 					model = pick;
 					adoptThinkingForModel(pick);
+					// A configured default that no longer resolves (a renamed or retired
+					// id) must not be replaced silently; the suffix below names `pick`.
+					// The checks above ran against usable models only, so tell a model
+					// the catalog lacks apart from one without credentials or scope.
+					const configuredDefault = settings.getModelRole("default");
+					if (configuredDefault && !hasExplicitModel) {
+						const inCatalog = resolveModelRoleValue(configuredDefault, modelRegistry.getAll(), {
+							settings,
+							matchPreferences: modelMatchPreferences,
+						}).model;
+						const defaultReason = inCatalog
+							? `Default model ${configuredDefault} is unavailable (no credentials, or not in enabledModels)`
+							: `Default model ${configuredDefault} not found`;
+						// Keep an earlier diagnostic (a saved session model that could not be restored).
+						modelFallbackMessage = modelFallbackMessage
+							? `${modelFallbackMessage}. ${defaultReason}`
+							: defaultReason;
+					}
 				}
 			}
 			if (model) {
@@ -3991,20 +4039,9 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			tools: Map<string, AgentTool>,
 		): Promise<BuildSystemPromptResult> => {
 			const promptCwd = sessionManager.getCwd();
-			const activeRepoContext = hasSession
-				? await logger.time("resolveActiveRepoContext", resolveRepoContext, promptCwd)
-				: initialActiveRepoContext;
-			if (hasSession && pinnedContextFiles === undefined) {
-				contextFiles = contextFileFilter(
-					await logger.time("discoverContextFiles", discoverContextFiles, promptCwd, agentDir, [
-						...cfgDisabledExtensions.get(settings),
-					]),
-				);
-				toolSession.contextFiles = contextFiles;
-				session.setAdvisorContextPrompt(formatAdvisorContextPrompt(contextFiles));
-			}
-			// Re-discover rules from disk on every session-scoped rebuild, mirroring the
-			// context-file refresh above. The rule buckets are otherwise frozen at
+			let activeRepoContext = initialActiveRepoContext;
+			// Re-discover rules and context files from disk on every session-scoped
+			// rebuild. The rule buckets are otherwise frozen at
 			// session creation, so a `RULES.md` (or any rule) created or edited while omp
 			// runs never reaches the prompt on /clear or /new until restart (issue #10940).
 			// resetCapabilities() clears the fs cache at those boundaries, so this observes
@@ -4013,14 +4050,30 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			// Sessions handed an explicit rule set (subagents inherit the parent's) keep it
 			// but still re-bucket, so live `ttsr.*` filter changes apply to them too.
 			if (hasSession) {
-				const ttsrSettings = cfgTtsr.get(settings);
-				const ruleItems =
+				// These reads share only the cwd and discovery scope. Start them together:
+				// a slow repository lookup must not delay context files or rules, including
+				// the first refresh after session_start hooks have edited those files.
+				const [repoContext, refreshedContextFiles, ruleItems] = await Promise.all([
+					logger.time("resolveActiveRepoContext", resolveRepoContext, promptCwd),
+					pinnedContextFiles === undefined
+						? logger.time("discoverContextFiles", discoverContextFiles, promptCwd, agentDir, [
+								...cfgDisabledExtensions.get(settings),
+							])
+						: undefined,
 					options.rules ??
-					(
-						await logger.time("rediscoverRules", () =>
-							loadCapability<Rule>(ruleCapability.id, { cwd: promptCwd, agentDir }),
-						)
-					).items;
+						logger
+							.time("rediscoverRules", () =>
+								loadCapability<Rule>(ruleCapability.id, { cwd: promptCwd, agentDir }),
+							)
+							.then(result => result.items),
+				]);
+				activeRepoContext = repoContext;
+				if (refreshedContextFiles !== undefined) {
+					contextFiles = contextFileFilter(refreshedContextFiles);
+					toolSession.contextFiles = contextFiles;
+					session.setAdvisorContextPrompt(formatAdvisorContextPrompt(contextFiles));
+				}
+				const ttsrSettings = cfgTtsr.get(settings);
 				const buckets = bucketRules(ruleItems, ttsrManager, {
 					builtinRules: ttsrSettings.builtinRules,
 					disabledRules: ttsrSettings.disabledRules,
@@ -4191,6 +4244,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 				memoryBackend: memoryBackend?.id,
 				securityEnabled: cfgSecurityEnabled.get(settings),
 				settingsApproval: toolSession.settingsApproval === true,
+				outReplies: outRepliesActive(settings, tuiTranscript),
 				evalPreludes: toolSession.getAdvertisedEvalPreludes?.(),
 				model: getActiveModelString(),
 				includeModelInPrompt: cfgIncludeModelInPrompt.get(settings),
@@ -4422,7 +4476,6 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			model => modelRegistry.getApiKey(model, providerSessionId),
 		);
 		disposeCallbacks.add(() => blobBroker.dispose());
-		const dateCwdReminder = new DateCwdReminderInjector();
 		// Always installed; the getter-backed options are snapshotted per request,
 		// so `snapcompact.*` changes apply on the next call (a no-op while both are off).
 		const snapcompactInline = new SnapcompactInlineTransformer(
@@ -4444,29 +4497,35 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			// only when a provider fetches them, never held as pixels here.
 			blobBroker,
 		);
-		const transformProviderContext = async (context: Context, transformModel: Model): Promise<Context> => {
-			let transformed = obfuscator ? obfuscateProviderContext(obfuscator, context) : context;
-			// The archive was sized for the model active at the last context build; a model switch may have lowered the budget.
-			transformed = capArchiveFrameBytes(transformed, transformModel);
-			transformed = await snapcompactInline.transform(transformed, transformModel);
-			transformed = clampProviderContextImages(transformed, transformModel);
-			transformed = await normalizeProviderContextImagesForModel(transformed, transformModel);
-			// After the model-specific normalizers: they carry better wording for the
-			// cases they own (STB WebP), so this stays the backstop for everything
-			// else, and it runs before the blob broker uploads any of these bytes.
-			transformed = await dropUnreadableContextImages(transformed, transformModel);
-			transformed = await blobBroker.decorateContext(transformed, transformModel);
-			// Byte budget after decoration: URL/file-referenced images carry no inline bytes.
-			transformed = clampProviderContextImageBytes(transformed, transformModel);
-			// Keep per-request volatility out of the system prompt: the date/cwd
-			// reminder rides on the first user turn so open-weight providers keep
-			// their tool-schema prefix cache (#7404).
-			return dateCwdReminder.transform(
-				transformed,
-				formatLocalCalendarDate(),
-				normalizePromptPath(sessionManager.getCwd()),
-			);
+		// One transform per conversation: the date/cwd reminder remembers what each
+		// conversation was sent, so the main loop and every advisor get their own.
+		const createTransformProviderContext = () => {
+			const dateCwdReminder = new DateCwdReminderInjector();
+			return async (context: Context, transformModel: Model): Promise<Context> => {
+				let transformed = obfuscator ? obfuscateProviderContext(obfuscator, context) : context;
+				// The archive was sized for the model active at the last context build; a model switch may have lowered the budget.
+				transformed = capArchiveFrameBytes(transformed, transformModel);
+				transformed = await snapcompactInline.transform(transformed, transformModel);
+				transformed = clampProviderContextImages(transformed, transformModel);
+				transformed = await normalizeProviderContextImagesForModel(transformed, transformModel);
+				// After the model-specific normalizers: they carry better wording for the
+				// cases they own (STB WebP), so this stays the backstop for everything
+				// else, and it runs before the blob broker uploads any of these bytes.
+				transformed = await dropUnreadableContextImages(transformed, transformModel);
+				transformed = await blobBroker.decorateContext(transformed, transformModel);
+				// Byte budget after decoration: URL/file-referenced images carry no inline bytes.
+				transformed = clampProviderContextImageBytes(transformed, transformModel);
+				// Keep per-request volatility out of the system prompt: the date/cwd
+				// reminder rides on the first user turn so open-weight providers keep
+				// their tool-schema prefix cache (#7404).
+				return dateCwdReminder.transform(
+					transformed,
+					formatLocalCalendarDate(),
+					normalizePromptPath(sessionManager.getCwd()),
+				);
+			};
 		};
+		const transformProviderContext = createTransformProviderContext();
 		const onPayload = async (payload: unknown, model?: Model, signal?: AbortSignal) => {
 			return await extensionRunner.emitBeforeProviderRequest(payload, model, signal);
 		};
@@ -4777,6 +4836,10 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			get skillHintVisible() {
 				return toolSession.skillHintVisible;
 			},
+			// Live, not the spread's copy: a rediscovery after a plugin upgrade replaces the primary's list.
+			get skills() {
+				return toolSession.skills;
+			},
 			hasEditTool: true,
 			requireYieldTool: false,
 			getSessionId: () => {
@@ -4901,6 +4964,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			mcpManagerToolNames: initialMcpManagerToolNames,
 			transformContext,
 			transformProviderContext,
+			createAdvisorTransformProviderContext: createTransformProviderContext,
 			onPayload,
 			onResponse,
 			sideStreamFn: settingsAwareStreamFn,
@@ -5331,6 +5395,9 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 								await resolveApiKeyOnce(await options.getApiKey(codexModel))
 							: await modelRegistry.getApiKey(codexModel, providerSessionId);
 						if (!codexPrewarmApiKey) return;
+						// Load the transport only for an actual Codex prewarm, not unrelated session setup.
+						const { prewarmOpenAICodexResponses } =
+							await import("@oh-my-pi/pi-ai/providers/openai-codex-responses");
 						await logger.time("prewarmOpenAICodexResponses", prewarmOpenAICodexResponses, codexModel, {
 							apiKey: codexPrewarmApiKey,
 							sessionId: providerSessionId,
@@ -5350,16 +5417,17 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			}
 		}
 
-		// Broker-shared language servers (see lsp/mux/protocol.ts). The flag is
-		// module state read on every client cold start, so only a session that binds
-		// process state may set it. A subagent or helper session (usually
+		// Broker-shared language servers (see lsp/mux/protocol.ts). The mode is
+		// process state read on every client cold start, so only a session that binds
+		// process state holds it, until disposed. A subagent or helper session (usually
 		// enableLsp=false) must not switch the parent's later cold starts to private
 		// servers. Re-applied live on `lsp.shared` changes; running clients keep
 		// their transport until they exit or idle out.
 		if (bindsProcessState) {
-			setSharedLspEnabled(enableLsp && cfgLspShared.get(settings));
+			const sharedLsp = holdSharedLsp(enableLsp && cfgLspShared.get(settings));
+			disposeCallbacks.add(sharedLsp.release);
 			if (enableLsp) {
-				cfgLspShared.listen(session, shared => setSharedLspEnabled(shared));
+				cfgLspShared.listen(session, shared => sharedLsp.set(shared));
 			}
 		}
 

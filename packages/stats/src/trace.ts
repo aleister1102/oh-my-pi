@@ -442,7 +442,7 @@ function unionLength(intervals: Array<[number, number]>): number {
 // Single-transcript scan
 
 /** Keep only the active branch: the parentId chain walked back from the last entry. */
-function activeChain(views: EntryView[]): EntryView[] {
+function activeChain(views: readonly EntryView[]): EntryView[] {
 	const byId = new Map<string, EntryView>();
 	let last: EntryView | undefined;
 	for (const entry of views) {
@@ -490,13 +490,14 @@ function argsPreview(args: unknown): string | undefined {
  * markers, and the cross-track facts (task results, request counts).
  */
 function scanTranscript(
-	entries: SessionEntry[],
+	entries: readonly SessionEntry[],
 	trackId: string,
 	parentTrackId: string | null,
 	file: string,
+	header?: TraceSnapshotHeader | null,
 ): TrackScan {
 	// Boundary cast: persisted JSONL entries are re-validated field-by-field below.
-	const views = entries as EntryView[];
+	const views = entries as readonly EntryView[];
 	const chain = activeChain(views);
 	const spans: TraceSpan[] = [];
 	const markers: TraceMarker[] = [];
@@ -509,9 +510,9 @@ function scanTranscript(
 	const taskResults: TaskResultFact[] = [];
 
 	let sessionExit: { recordedAt: number; pendingIds: Set<string> } | undefined;
-	let cwd: string | null = null;
-	let headerTitle: string | null = null;
-	let headerTs: number | undefined;
+	let cwd = typeof header?.cwd === "string" ? header.cwd : null;
+	let headerTitle = typeof header?.title === "string" ? header.title : null;
+	let headerTs = toMs(header?.timestamp);
 	let slotTitle: string | null = null;
 	let initAgent: string | null = null;
 	let initModel: string | null = null;
@@ -901,7 +902,7 @@ async function buildTrackTree(
 			const childTrackId = trackId === "main" ? stem : `${trackId}/${stem}`;
 			const childScan = await buildTrackTree(childFile, childTrackId, trackId, depth + 1, visited, out, scans);
 			if (!childScan) continue;
-			const isAdvisor = name === "__advisor.jsonl" || (name.startsWith("__advisor.") && name.endsWith(".jsonl"));
+			const isAdvisor = stem === "__advisor" || stem.startsWith("__advisor.");
 			childScan.track.label = isAdvisor
 				? "Advisor"
 				: headText(`${childScan.track.agent ?? "agent"} ${stem}`, LABEL_MAX);
@@ -909,6 +910,13 @@ async function buildTrackTree(
 		}
 	}
 
+	linkChildTracks(scan, childrenById);
+	return scan;
+}
+
+/** Place child activity and structured task-result spans on their parent track. */
+function linkChildTracks(scan: TrackScan, childrenById: ReadonlyMap<string, TrackScan>): void {
+	const trackId = scan.track.id;
 	// Subagent spans on this track, one per task SingleResult.
 	const linkedChildren = new Set<string>();
 	for (const result of scan.taskResults) {
@@ -958,8 +966,6 @@ async function buildTrackTree(
 		scan.track.spans.push(span);
 	}
 	scan.track.spans.sort((a, b) => a.start - b.start || a.end - b.end);
-
-	return scan;
 }
 
 // ---------------------------------------------------------------------------
@@ -1179,6 +1185,115 @@ export async function buildSessionTrace(fileParam: string, fingerprint?: TraceFi
 	if (!rootScan) {
 		throw Object.assign(new Error(`ENOENT: session not found: ${resolved}`), { code: "ENOENT" });
 	}
+	// Re-collect the fingerprint AFTER the parse: a child append landing
+	// between the pre-build check and now would otherwise be baked into
+	// neither the trace nor the key.
+	const childFingerprint = await childTranscriptsFingerprint(resolved);
+	const rootStat = await fs.stat(resolved).catch(() => null);
+	const rootChanged = rootStat === null || rootStat.mtimeMs !== rootMtimeMs || rootStat.size !== rootSize;
+	const raced = childFingerprint !== preChildFingerprint;
+	// Raced builds keep the PRE-build fingerprint as their ETag: the parsed
+	// bytes predate the racy write, so claiming the post-write state would
+	// 304 stale forever when that write was the child's last. The pre-build
+	// key guarantees the next conditional poll misses (filesystem moved on)
+	// and rebuilds — at most one stale response per race, never an
+	// indefinitely cached one. Unraced builds use the post-build key, which
+	// equals the pre-build key by construction.
+	const etagFingerprint = raced || rootChanged ? preChildFingerprint : childFingerprint;
+	const trace = assembleSessionTrace(
+		rootScan,
+		tracks,
+		scans,
+		rootMtimeMs,
+		traceEtagKey(rootMtimeMs, rootSize, etagFingerprint),
+	);
+	if (!raced && !rootChanged) {
+		storeTraceCache(resolved, {
+			mtimeMs: rootMtimeMs,
+			size: rootSize,
+			childFingerprint,
+			trace,
+			bytes: estimateTraceBytes(trace),
+		});
+	}
+	return trace;
+}
+
+/** Header metadata used by snapshot traces, including journals without a schema version. */
+export interface TraceSnapshotHeader {
+	timestamp?: string;
+	cwd?: string;
+	title?: string;
+}
+
+/** The journal data for one embedded transcript; its header may be stored separately. */
+export interface SessionTraceSnapshot {
+	header?: TraceSnapshotHeader | null;
+	entries: readonly SessionEntry[];
+}
+
+/** A collected child transcript, keyed by its slash-joined path from the root. */
+export interface SubSessionTraceSnapshot extends SessionTraceSnapshot {
+	parent: string | null;
+}
+
+/**
+ * Assemble an offline trace using the same timing joins and rollups as the live
+ * filesystem builder. Only supplied snapshots participate: no filesystem, DB,
+ * network, or wall-clock reads. Track files are snapshot keys, never disk paths.
+ *
+ * Missing parent transcripts attach their readable descendants to main. Unlike
+ * filesystem discovery, already-collected snapshots need no depth limit.
+ * `mtimeMs` is the root's last activity (or header time, then 0); the constant
+ * `etag` identifies a snapshot, not a conditional HTTP response.
+ */
+export function buildSessionTraceFromSnapshots(
+	root: SessionTraceSnapshot,
+	subSessions?: Readonly<Record<string, SubSessionTraceSnapshot>>,
+): SessionTrace {
+	const children = new Map<string | null, Array<[string, SubSessionTraceSnapshot]>>();
+	if (subSessions) {
+		for (const key of Object.keys(subSessions).sort()) {
+			const snapshot = subSessions[key];
+			const parent =
+				snapshot.parent !== null && Object.hasOwn(subSessions, snapshot.parent) ? snapshot.parent : null;
+			const siblings = children.get(parent);
+			if (siblings) siblings.push([key, snapshot]);
+			else children.set(parent, [[key, snapshot]]);
+		}
+	}
+
+	const tracks: TraceTrack[] = [];
+	const scans: TrackScan[] = [];
+	const visit = (snapshot: SessionTraceSnapshot, key: string, parentId: string | null): TrackScan => {
+		const scan = scanTranscript(snapshot.entries, key, parentId, key, snapshot.header);
+		tracks.push(scan.track);
+		scans.push(scan);
+		const childrenById = new Map<string, TrackScan>();
+		for (const [childKey, childSnapshot] of children.get(parentId === null ? null : key) ?? []) {
+			const child = visit(childSnapshot, childKey, key);
+			const stem = childKey.slice(childKey.lastIndexOf("/") + 1);
+			child.track.label =
+				stem === "__advisor" || stem.startsWith("__advisor.")
+					? "Advisor"
+					: headText(`${child.track.agent ?? "agent"} ${stem}`, LABEL_MAX);
+			childrenById.set(stem, child);
+		}
+		linkChildTracks(scan, childrenById);
+		return scan;
+	};
+	const rootScan = visit(root, "main", null);
+	return assembleSessionTrace(rootScan, tracks, scans, rootScan.lastActivity ?? rootScan.headerTs ?? 0, "snapshot");
+}
+
+/** Shared aggregation after either filesystem discovery or snapshot traversal. */
+function assembleSessionTrace(
+	rootScan: TrackScan,
+	tracks: TraceTrack[],
+	scans: TrackScan[],
+	rootMtimeMs: number,
+	etag: string,
+): SessionTrace {
 	rootScan.track.label = "Main";
 
 	let startedAt: number | undefined;
@@ -1251,47 +1366,21 @@ export async function buildSessionTrace(fileParam: string, fingerprint?: TraceFi
 		toolStats: [...toolStats.values()].sort((a, b) => b.totalMs - a.totalMs),
 	};
 
-	// Re-collect the fingerprint AFTER the parse: a child append landing
-	// between the pre-build check and now would otherwise be baked into
-	// neither the trace nor the key.
-	const childFingerprint = await childTranscriptsFingerprint(resolved);
-	// Root rewritten mid-build: same no-cache rule as the child race below.
-	const rootStat = await fs.stat(resolved).catch(() => null);
-	const rootChanged = rootStat === null || rootStat.mtimeMs !== rootMtimeMs || rootStat.size !== rootSize;
-	const raced = childFingerprint !== preChildFingerprint;
-	// Raced builds keep the PRE-build fingerprint as their ETag: the parsed
-	// bytes predate the racy write, so claiming the post-write state would
-	// 304 stale forever when that write was the child's last. The pre-build
-	// key guarantees the next conditional poll misses (filesystem moved on)
-	// and rebuilds — at most one stale response per race, never an
-	// indefinitely cached one. Unraced builds use the post-build key, which
-	// equals the pre-build key by construction.
-	const etagFingerprint = raced || rootChanged ? preChildFingerprint : childFingerprint;
 	// `summary` above already covers the full tree; only the transport track
 	// list is capped, and `truncated` tells the client what was omitted.
 	const truncated = truncateTraceTracks(tracks);
-	const trace: SessionTrace = {
-		file: resolved,
+	return {
+		file: rootScan.track.file,
 		title: rootScan.title,
 		cwd: rootScan.cwd,
 		startedAt: start,
 		endedAt: end,
 		mtimeMs: rootMtimeMs,
-		etag: traceEtagKey(rootMtimeMs, rootSize, etagFingerprint),
+		etag,
 		tracks,
 		truncated,
 		summary,
 	};
-	if (!raced && !rootChanged) {
-		storeTraceCache(resolved, {
-			mtimeMs: rootMtimeMs,
-			size: rootSize,
-			childFingerprint,
-			trace,
-			bytes: estimateTraceBytes(trace),
-		});
-	}
-	return trace;
 }
 
 /** Fetch one full journal entry by id from a transcript, for the span drawer. */

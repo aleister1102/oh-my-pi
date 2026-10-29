@@ -112,57 +112,48 @@ export type CompressProbe = { tool: ApfsTool; unavailable?: undefined } | { tool
 const APPLESAUCE_INSTALL_HINT = "install applesauce (brew install Dr-Emann/homebrew-tap/applesauce)";
 
 /**
- * Check that `method` really shrinks a compressible file on the volume holding
- * `dir`, by compressing a scratch file there. A filesystem can report support
- * (an APFS volume) while the tool silently stores everything uncompressed, as
- * macOS 27's `ditto --hfsCompression` does; without this check a run would copy
- * and hash every file for no savings. On APFS, `ditto` is tried first, then
- * `applesauce` when it is on `PATH`.
+ * Check that `method` shrinks a compressible file on the volume holding `dir`,
+ * using the copy-and-swap pipeline on a scratch file. Returns the first tool
+ * that shrinks it, or `unavailable` when every tool stores it uncompressed.
+ * Rejects when a tool exits non-zero or the scratch directory cannot be created.
  */
 export async function probeCompression(
 	dir: string,
 	method: CompressMethod,
 	searchPath: string | undefined = process.env.PATH,
 ): Promise<CompressProbe> {
-	let scratch: string | undefined;
+	const scratch = await fs.mkdtemp(path.join(dir, COMPRESS_SCRATCH_PREFIX));
 	try {
-		scratch = await fs.mkdtemp(path.join(dir, COMPRESS_SCRATCH_PREFIX));
 		await Bun.write(path.join(scratch, SCRATCH_OWNER_MARKER), "");
+		const applesauce = method === "apfs" ? Bun.which("applesauce", { PATH: searchPath ?? "" }) : null;
+		const tools: ApfsTool[] = [method === "ntfs" ? "compact" : "ditto"];
+		if (applesauce !== null) tools.push(applesauce);
 		const line = `${JSON.stringify({ type: "message", text: "compression probe ".repeat(4) })}\n`;
-		const source = path.join(scratch, "probe.log");
-		await Bun.write(source, line.repeat(Math.ceil(PROBE_BYTES / line.length)));
-		const allocatedBefore = (await fs.lstat(source)).blocks * 512;
-		const shrinks = async (target: string): Promise<boolean> =>
-			(await fs.lstat(target)).blocks * 512 < allocatedBefore;
 		const tooLarge = `${PROBE_BYTES / 1024} KiB text file`;
-		if (method === "ntfs") {
-			const run = await $`compact /c /i /a /q ${source}`.quiet().nothrow();
-			if (run.exitCode !== 0) {
-				return { unavailable: `compact exited ${run.exitCode}: ${run.stderr.toString().trim()}` };
+		const errors: string[] = [];
+		const unshrunk: string[] = [];
+		for (const [index, tool] of tools.entries()) {
+			// Each tool gets its own probe file: a tool that shrinks it replaces it in place.
+			const attempt = path.join(scratch, `tool-${index}`);
+			await fs.mkdir(attempt);
+			const source = path.join(attempt, "probe.log");
+			await Bun.write(source, line.repeat(Math.ceil(PROBE_BYTES / line.length)));
+			const candidate = await compressCandidate(source);
+			if (candidate === undefined) throw new Error(`${source} is not a compression candidate`);
+			const batch = await compressFilesInPlace([candidate], method, new Set(), createCompressRun(1, tool));
+			if (batch.errors.length > 0) {
+				errors.push(...batch.errors);
+				continue;
 			}
-			if (await shrinks(source)) return { tool: "compact" };
-			return { unavailable: `compact /c did not shrink a ${tooLarge} on this volume` };
+			if (batch.compressed === 1) return { tool };
+			unshrunk.push(`${tool} did not shrink a ${tooLarge} on this volume`);
 		}
-		const copy = path.join(scratch, "probe-copy.log");
-		const ditto = await $`ditto --hfsCompression ${source} ${copy}`.quiet().nothrow();
-		if (ditto.exitCode === 0 && (await shrinks(copy))) return { tool: "ditto" };
-		const applesauce = Bun.which("applesauce", { PATH: searchPath ?? "" });
-		if (applesauce === null) {
-			return {
-				unavailable: `ditto --hfsCompression did not shrink a ${tooLarge} on this volume; ${APPLESAUCE_INSTALL_HINT}`,
-			};
-		}
-		const applesauceDir = path.join(scratch, "applesauce");
-		await fs.mkdir(applesauceDir);
-		const made = await copyThenCompress(applesauce, [source], applesauceDir);
-		if (made.exitCode === 0 && (await shrinks(path.join(applesauceDir, path.basename(source))))) {
-			return { tool: applesauce };
-		}
-		return { unavailable: `neither ditto --hfsCompression nor ${applesauce} shrank a ${tooLarge} on this volume` };
-	} catch (error) {
-		return { unavailable: `probe failed: ${errorMessage(error)}` };
+		if (errors.length > 0) throw new Error(errors.join("; "));
+		const hint = method === "apfs" && applesauce === null ? `; ${APPLESAUCE_INSTALL_HINT}` : "";
+		const reason = `${method} compression stored a compressible probe file uncompressed`;
+		return { unavailable: `${reason}: ${unshrunk.join("; ")}${hint}` };
 	} finally {
-		if (scratch !== undefined) await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});
+		await fs.rm(scratch, { recursive: true, force: true }).catch(() => {});
 	}
 }
 

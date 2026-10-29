@@ -3,9 +3,14 @@ import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
 import {
 	type AutocompleteProvider,
+	BRACKETED_PASTE_END,
+	BRACKETED_PASTE_START,
 	type Component,
 	emergencyTerminalRestore,
+	isKeyRelease,
+	isKeyRepeat,
 	matchesKey,
+	parseKey,
 	parseSgrMouse,
 	type PasteOptions,
 	type SlashCommand,
@@ -42,11 +47,10 @@ import { invokeSkillCommandFromText, isKnownSkillCommand } from "../../modes/ski
 import { parseFileSlashInvocation, renderFileSlashCommand } from "../../extensibility/slash-commands";
 import type { InteractiveModeContext, SubmittedUserInput } from "../../modes/types";
 import { openLocalFileInEditor } from "../local-file-editor";
-import manualContinuePrompt from "../../prompts/system/manual-continue.md" with { type: "text" };
 import { AgentRegistry } from "../../registry/agent-registry";
 import type { RestoredQueuedMessage } from "../../session/agent-session-types";
 import { USER_INTERRUPT_LABEL } from "../../session/messages";
-import { PINNED_HUD_TOGGLE_ID } from "@oh-my-pi/pi-tui/prompt/composer";
+import { PINNED_HUD_TOGGLE_ID } from "../../task/output-manager";
 import { pickRecentFocusableAgentId } from "./session-focus-controller";
 import { executeBuiltinSlashCommand, lookupBuiltinSlashCommand } from "../../slash-commands/builtin-registry";
 import { restoreDetachedDraft } from "../../slash-commands/helpers/draft";
@@ -58,6 +62,7 @@ import { shortenPath, TRUNCATE_LENGTHS, truncateToWidth } from "@oh-my-pi/pi-tui
 import { vocalizer } from "../../tts/vocalizer";
 import {
 	copyToClipboard,
+	isClipboardTerminalLocal,
 	readImageFromClipboard,
 	readMacFileUrlsFromClipboard,
 	readTextFromClipboard,
@@ -90,6 +95,9 @@ import { cfgHideThinkingBlock } from "../../session/settings";
 
 /** Bare words that quit (as `/<word>`) when typed alone into a session with no messages. */
 const BARE_EXIT_WORDS: Record<string, true> = { exit: true, quit: true, q: true };
+
+const REMOTE_CLIPBOARD_STATUS =
+	"Clipboard here belongs to the SSH host — use your terminal's paste shortcut to paste from your machine";
 
 /**
  * Slash commands that may carry secrets in their arguments should never be
@@ -273,10 +281,13 @@ export class InputController {
 			readImage: typeof readImageFromClipboard;
 			readText: typeof readTextFromClipboard;
 			readMacFileUrls?: typeof readMacFileUrlsFromClipboard;
+			/** False when the readable clipboard is not the terminal's (SSH); omitted means local. */
+			isTerminalLocal?: typeof isClipboardTerminalLocal;
 		} = {
 			readImage: readImageFromClipboard,
 			readText: readTextFromClipboard,
 			readMacFileUrls: readMacFileUrlsFromClipboard,
+			isTerminalLocal: isClipboardTerminalLocal,
 		},
 	) {}
 
@@ -305,6 +316,7 @@ export class InputController {
 	#globalEditorActionsListenerInstalled = false;
 	#expandToolsListenerInstalled = false;
 	#inlineMouseListenerInstalled = false;
+	#linkHintListenerInstalled = false;
 
 	/** Click-candidate id the hover band currently tracks; repaint only on change. */
 	#lastHoverClickId: string | undefined;
@@ -347,6 +359,11 @@ export class InputController {
 	setupKeyHandlers(): void {
 		this.#draftText ??= this.ctx.editor.getText();
 		this.ctx.editor.setActionKeys("app.interrupt", this.ctx.keybindings.getKeys("app.interrupt"));
+		if (!this.#linkHintListenerInstalled) {
+			this.#linkHintListenerInstalled = true;
+			// First, so a tag letter typed in link-hint mode reaches no other listener or the editor.
+			this.ctx.ui.addInputListener(data => this.#handleLinkHintInput(data));
+		}
 		if (!this.#focusedLeftTapListenerInstalled) {
 			this.#focusedLeftTapListenerInstalled = true;
 			this.ctx.ui.addInputListener(data => {
@@ -776,10 +793,12 @@ export class InputController {
 		this.#setupEnhancedPaste();
 
 		this.ctx.editor.onChange = (text: string) => {
+			const wasComposing = (this.#draftText ?? "").trim() !== "";
 			this.#draftText = text;
 			// Typing signals an imminent turn; refresh the API connection now so
 			// the handshake overlaps composition instead of delaying the send.
 			if (text) this.ctx.session.prewarmModelConnection();
+			if (wasComposing !== (text.trim() !== "")) this.ctx.syncIdleMaintenanceView();
 			const wasBashMode = this.ctx.isBashMode;
 			const wasPythonMode = this.ctx.isPythonMode;
 			const trimmed = text.trimStart();
@@ -823,7 +842,38 @@ export class InputController {
 		const event = parseSgrMouse(data);
 		if (!event) return undefined;
 		if (event.motion) this.#updateHoverHighlight(event.row);
-		else if (event.leftClick) this.#focusClickedAgent(event.row);
+		else if (event.leftClick && !this.#activateClickedLink(event.row, event.col)) this.#focusClickedAgent(event.row);
+		return { consume: true };
+	}
+
+	/**
+	 * Keyboard link picking. `app.links.hint` enters link-hint mode, which then owns the keyboard
+	 * while the editor has focus: a lowercase letter narrows the tags, and any other key cancels and
+	 * is swallowed so a stray Esc or Enter does nothing else. Ctrl+C and a paste cancel and still do
+	 * what they always do. Key releases and repeats (the hint key's own) are ignored; mouse reports
+	 * pass through untouched. Keys the TUI routes before input listeners (a space held for
+	 * push-to-talk) never reach this.
+	 */
+	#handleLinkHintInput(data: string): { consume?: boolean } | undefined {
+		// Overlays and editor-area dialogs (ask, selectors, hook input) own the keyboard.
+		const editorFocused = () => !this.ctx.ui.hasOverlay() && this.ctx.ui.getFocused() === this.ctx.editor;
+		if (!this.ctx.linkHintsActive) {
+			if (!this.ctx.keybindings.matches(data, "app.links.hint") || !editorFocused()) return undefined;
+			return this.ctx.startLinkHints() ? { consume: true } : undefined;
+		}
+		if (!editorFocused()) {
+			this.ctx.cancelLinkHints();
+			return undefined;
+		}
+		if (isKeyRelease(data) || isKeyRepeat(data)) return { consume: true };
+		if (data.startsWith("\x1b[<")) return undefined;
+		if (matchesKey(data, "ctrl+c") || data.startsWith("\x1b[200~")) {
+			this.ctx.cancelLinkHints();
+			return undefined;
+		}
+		const key = parseKey(data);
+		if (key !== undefined && /^[a-z]$/.test(key)) this.ctx.typeLinkHint(key);
+		else this.ctx.cancelLinkHints();
 		return { consume: true };
 	}
 
@@ -844,10 +894,22 @@ export class InputController {
 	// empty (resize transactions) or the row falls outside it: routing stale
 	// spans would highlight or focus an unrelated agent from old rows.
 	#viewportCandidates(screenRow: number): string[] {
+		const line = this.#viewportLine(screenRow);
+		return line === undefined ? [] : this.ctx.resolveViewportClickCandidates(line);
+	}
+
+	/** Mutable-viewport line under a screen row, or `undefined` outside the published viewport. */
+	#viewportLine(screenRow: number): number | undefined {
 		const viewport = this.ctx.ui.getMutableViewport();
 		const local = screenRow - viewport.top;
-		if (viewport.length === 0 || local < 0 || local >= viewport.length) return [];
-		return this.ctx.resolveViewportClickCandidates(local);
+		if (viewport.length === 0 || local < 0 || local >= viewport.length) return undefined;
+		return local;
+	}
+
+	// A click on an extension-owned link goes to that extension instead of focusing an agent.
+	#activateClickedLink(screenRow: number, col: number): boolean {
+		const line = this.#viewportLine(screenRow);
+		return line !== undefined && this.ctx.activateViewportLink(line, col);
 	}
 
 	/**
@@ -930,14 +992,20 @@ export class InputController {
 		this.#enhancedPaste = new EnhancedPasteController({
 			write: data => this.ctx.ui.terminal.write(data),
 			pasteText: text => {
-				// Route enhanced-paste text to the currently focused component when it
-				// exposes a `pasteText` hook (modal Input prompts: OAuth API-key entry,
-				// Perplexity OTP, GitHub Enterprise URL, manual redirect URL). Falling
-				// back to the main editor would have buried the text in the detached
-				// editor while the modal Input had focus (#2127).
+				// Route enhanced-paste text to the currently focused component: through
+				// its `pasteText` hook (modal Input prompts: OAuth API-key entry,
+				// Perplexity OTP, GitHub Enterprise URL, manual redirect URL), else as
+				// the bracketed paste a terminal without enhanced paste sends it
+				// (dialogs that keep their field inside: the agents hub's New agent,
+				// the /annotate note). Falling back to the main editor would bury the
+				// text in the detached editor while the dialog has focus (#2127). The
+				// main editor takes it as a bracketed paste too, so a pasted or dropped
+				// image path attaches (#3506) instead of landing as text.
 				const focused = this.ctx.ui.getFocused();
-				const target = focused && focused !== this.ctx.editor && hasPasteText(focused) ? focused : this.ctx.editor;
-				target.pasteText(text);
+				if (focused && focused !== this.ctx.editor && hasPasteText(focused)) focused.pasteText(text);
+				else if (focused && focused !== this.ctx.editor && focused.handleInput)
+					focused.handleInput(`${BRACKETED_PASTE_START}${text}${BRACKETED_PASTE_END}`);
+				else this.ctx.editor.handleInput(`${BRACKETED_PASTE_START}${text}${BRACKETED_PASTE_END}`);
 				this.ctx.ui.requestRender();
 			},
 			pasteImage: image =>
@@ -1029,21 +1097,13 @@ export class InputController {
 
 			if (!text && !hasPendingImages) return;
 
-			// Continue shortcuts: "." or "c" resume the agent with a hidden agent-authored
-			// developer directive (no visible user message) instead of an empty turn, so the
-			// model continues the prior intent rather than second-guessing the interrupt.
-			// During a /guided-goal interview "c" is a plausible answer (e.g. option C),
-			// so it is sent as a normal reply there.
+			// Continue shortcuts: "." or "c" resume the agent without a visible user
+			// message (see AgentSession.resume). During a /guided-goal interview "c" is
+			// a plausible answer (e.g. option C), so it is sent as a normal reply there.
 			if (text === "." || (text === "c" && !this.ctx.isGuidedGoalInterviewActive())) {
 				if (this.ctx.onInputCallback) {
 					this.ctx.editor.clearDraft();
-					this.ctx.onInputCallback({
-						text: manualContinuePrompt,
-						cancelled: false,
-						started: true,
-						synthetic: true,
-						userInitiated: true,
-					});
+					this.ctx.onInputCallback({ text, cancelled: false, started: true, resume: true });
 				}
 				return;
 			}
@@ -1576,10 +1636,8 @@ export class InputController {
 		const isContinueShortcut = streamingBehavior === "steer" && !images && (text === "." || text === "c");
 		this.ctx.editor.clearDraft(text);
 		try {
-			// Synthetic directives must not use streamingBehavior: AgentSession would
-			// otherwise queue them as visible user messages while the target is busy.
 			if (isContinueShortcut) {
-				await target.prompt(manualContinuePrompt, { synthetic: true, userInitiated: true });
+				await target.resume();
 			} else {
 				await this.ctx.withLocalSubmission(text, () => target.prompt(text, { streamingBehavior, images }), {
 					imageCount: images?.length ?? 0,
@@ -2104,8 +2162,9 @@ export class InputController {
 
 	restoreQueuedMessagesToEditor(options?: { abort?: boolean; currentText?: string }): number {
 		this.ctx.locallySubmittedUserSignatures.clear();
-		// On Esc (abort) drop non-user internal steers so the post-abort drain can't
-		// auto-resume; plain Alt+Up dequeue preserves them for the continuing stream.
+		// On Esc (abort) the abort below records queued extension/agent messages in the
+		// transcript without a turn, so the post-abort drain can't auto-resume on them;
+		// plain Alt+Up dequeue leaves them queued for the continuing stream.
 		const { steering, followUp } = this.ctx.session.clearQueue({ forInterrupt: options?.abort });
 		// Messages typed while compacting live in `compactionQueuedMessages`, not the
 		// agent queue `clearQueue()` drains — but the pending bar shows the same
@@ -2399,9 +2458,16 @@ export class InputController {
 		};
 	}
 
+	/**
+	 * Over SSH the readable clipboard is the remote host's, not the one the user copied into, so a
+	 * paste key the terminal forwarded instead of pasting must not read it.
+	 */
+	#clipboardIsTerminalLocal(): boolean {
+		return this.clipboard.isTerminalLocal?.() ?? true;
+	}
+
 	async #tryPasteClipboardImage(sink: ImagePasteSink): Promise<boolean> {
-		const env = process.env;
-		if (env.SSH_CONNECTION || env.SSH_TTY || env.SSH_CLIENT) return false;
+		if (!this.#clipboardIsTerminalLocal()) return false;
 		try {
 			const image = await this.clipboard.readImage();
 			if (!image) return false;
@@ -2490,6 +2556,10 @@ export class InputController {
 	}
 
 	async handleImagePaste(): Promise<boolean> {
+		if (!this.#clipboardIsTerminalLocal()) {
+			this.ctx.showStatus(REMOTE_CLIPBOARD_STATUS);
+			return false;
+		}
 		let finishPaste: ((text: string | undefined) => boolean) | undefined;
 		let promptPaste: PromptImagePaste | undefined;
 		try {
@@ -2608,6 +2678,10 @@ export class InputController {
 	}
 
 	async handleClipboardTextRawPaste(): Promise<void> {
+		if (!this.#clipboardIsTerminalLocal()) {
+			this.ctx.showStatus(REMOTE_CLIPBOARD_STATUS);
+			return;
+		}
 		try {
 			const text = await this.clipboard.readText();
 			if (text) {

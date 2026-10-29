@@ -18,7 +18,7 @@ import type {
 	PreparedExtension,
 	ToolCallEventResult,
 } from "../extensibility/extensions/types";
-import type { Skill } from "../extensibility/skills";
+import type { Skill, SkillRediscoveryHost } from "../extensibility/skills";
 import type { GoalModeState, GoalRuntime } from "../goals";
 import { GoalTool } from "../goals/tools/goal-tool";
 import type { HindsightSessionState } from "../hindsight/state";
@@ -224,6 +224,11 @@ export interface ToolSession {
 	advertiseHeadlessAsk?: boolean;
 	/** The user approves `cfg://` writes for this session (top-level TUI session only). */
 	settingsApproval?: boolean;
+	/**
+	 * Replies render in omp's own transcript (the top-level interactive session, terminal or Tern);
+	 * false for print, RPC, ACP, and subagent sessions. See `CreateAgentSessionOptions.tuiTranscript`.
+	 */
+	tuiTranscript?: boolean;
 	/** Whether this session has begun disposal. */
 	isDisposed?: () => boolean;
 	/**
@@ -258,6 +263,8 @@ export interface ToolSession {
 	skillHintVisible?: boolean;
 	/** Rediscover live session skills after a tool mutates their backing files. */
 	refreshSkills?: () => Promise<void>;
+	/** The session as the holder `skill://` rediscovers through when a skill's files are gone. */
+	skillRediscoveryHost?: () => SkillRediscoveryHost;
 	/** Pre-loaded prompt templates */
 	promptTemplates?: PromptTemplate[];
 	/** Pre-loaded rules (forwarded to subagents to skip re-discovery). */

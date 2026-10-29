@@ -2,10 +2,70 @@
 
 ## [Unreleased]
 
+## [18.14.0] - 2026-10-29
+
+### Breaking Changes
+
+- Moved `PINNED_HUD_TOGGLE_ID` to the coding agent's task output manager so reserving subagent IDs no longer loads the interactive editor.
+- Updated `StatusLineHost.resetExpiryNotice` to receive the session and manage warning deduplication; custom status-line components must use the new signature.
+- Removed `ToolExecutionHandle.setToolActivityVisible`; tool-activity visibility is now controlled by transcript components, while reply blocks remain visible by default.
+- Removed the `@oh-my-pi/pi-tui/theme/defaults` export. Bundled palettes are now available through `getBuiltinThemes()` from `theme/defaults.json`.
+
+### Fixed
+
+- Fixed table-chart direction detection so measures are not incorrectly marked as better based on header words; single-measure tables are now sent for judging when local charting is appropriate.
+- Fixed LSP diagnostics that incorrectly showed “No issues” before a language server had reported; such files are now shown as unverified. ([#17293](https://github.com/can1357/oh-my-pi/pull/17293) by [@JustasMasiulis](https://github.com/JustasMasiulis))
+- Fixed Esc-Esc rewind in Tern selecting interrupted turns with no visible output instead of the last displayed turn.
+- Fixed streamed code blocks losing lines that scrolled off screen before the closing fence arrived; completed lines now remain available in scrollback. ([#17333](https://github.com/can1357/oh-my-pi/pull/17333) by [@gzkGit777](https://github.com/gzkGit777))
+
+## [18.13.3] - 2026-10-28
+
+### Added
+
+- The resume picker renames the selected session in place: F2 opens a dialog prefilled with the current title, Enter commits, Esc cancels ([#17262](https://github.com/can1357/oh-my-pi/pull/17262) by [@Twilight0](https://github.com/Twilight0))
+
+### Changed
+
+- Updated Bun engine requirement to ≥1.4.4
+
+### Fixed
+
+- Restored WebP and JPEG images stay visible in Kitty scrollback after resuming a session ([#17220](https://github.com/can1357/oh-my-pi/issues/17220)).
+- Escape in an annotation note no longer discards it: the overlay closes and `getDraft()`/`restoreDraft()` let the host keep and reopen the note; **Discard notes and close** (confirmed by a second press) clears them instead, and code review's actions start on Paste so a stray Enter never sends the LLM review ([#17271](https://github.com/can1357/oh-my-pi/pull/17271) by [@H4vC](https://github.com/H4vC), based on [#17230](https://github.com/can1357/oh-my-pi/pull/17230) by [@Shadorain](https://github.com/Shadorain)).
+- Fixed terminal replies such as Tern's `tsp;e;{"ev":"ack",…}` showing up in the shell prompt after quitting omp; the exit drain now waits for the terminal to answer a final DA1 sentinel
+- Fixed the plan review sheet in Tern squeezing the "continue with" model tiers under a long plan, so the model name overlapped the tier buttons
+- `/usage` in Tern shows when each quota resets as a countdown (`resets in 2h30m`) instead of a clock time; hovering shows the date and time
+- Fixed extension `ui.select` dialogs treating unconfigured `j`/`k` keys as navigation, which could turn a default No into Yes when typing `ok` then Enter ([#17255](https://github.com/can1357/oh-my-pi/pull/17255) by [@SAKANA-MOONLIGHT](https://github.com/SAKANA-MOONLIGHT)).
+
+### Removed
+
+- Removed support for the TSP `t` (theme) verb, as surface theme synchronization is no longer required
+
+## [18.13.2] - 2026-10-27
+
+### Added
+
+- Added a frame-write listener (`TUI.addFrameWriteListener`) for terminal integrations that need to react to emitted ANSI output, including resize paints ([#17145](https://github.com/can1357/oh-my-pi/issues/17145))
+- `HookInputComponent` (`showHookInput`) now accepts `{ secret: true }` to mask typed characters as bullets (`•`) in input overlays ([#17080](https://github.com/can1357/oh-my-pi/pull/17080) by [@GTanger](https://github.com/GTanger))
+- Added an ANSI and native `/context` viewer with category navigation, content inspection, token-usage and compaction estimates, and keyboard/mouse controls that adapt across Tern and other terminals ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
+
+### Fixed
+
+- Fixed `AskDialogComponent`'s draft input guard holding the keyboard until the draft was cleared; Up/Down (or a pointer action) now release it so the question can be answered with the draft parked, and `syncPresentation` receives the effective blocked state ([#17215](https://github.com/can1357/oh-my-pi/pull/17215) by [@H4vC](https://github.com/H4vC))
+- Fixed the prompt editor's autocomplete popup (e.g. emoji suggestions after `:D`) staying open and following the cursor after Shift/Ctrl/Alt+Enter inserted a newline, so the next Enter submitted past a stale list; newlines and cursor motion (arrows, Home/End, word jumps, character jumps) now close it ([#17215](https://github.com/can1357/oh-my-pi/pull/17215) by [@H4vC](https://github.com/H4vC))
+- Fixed `run_watch` failed-job rows hiding why a job's logs are unavailable; multiline `gh` errors now stay on one row ([#17173](https://github.com/can1357/oh-my-pi/pull/17173) by [@alphastorm](https://github.com/alphastorm))
+
+### Removed
+
+- Removed the static context usage report (`ContextUsageView`, `renderContextUsage`, `describeContextUsage`), `contextUsageHead()`, and the `glyph` and `color` fields of `ContextBreakdown` categories; use `ContextViewer` ([#16160](https://github.com/can1357/oh-my-pi/pull/16160) by [@C-W-Z](https://github.com/C-W-Z)).
+- Fixed Markdown tables inside list items disappearing from the terminal transcript ([#17165](https://github.com/can1357/oh-my-pi/issues/17165)).
+
+## [18.13.1] - 2026-10-27
+
 ### Added
 
 - ANSI and TSP `/pause` screens show unsettled turns and jobs, hide settled counters, and preserve counts and resume controls on short terminals ([#17073](https://github.com/can1357/oh-my-pi/pull/17073) by [@anatoli-tsinovoy](https://github.com/anatoli-tsinovoy)).
-- Added `noteOption` to `ExtensionAskDialogResultItem` and `QuestionResult`: the label of the option an ask note is on (unset for a note on the custom answer) ([#17126](https://github.com/can1357/oh-my-pi/pull/17126) by [@H4vC](https://github.com/H4vC))
+- Added `noteOption` to `ExtensionAskDialogResultItem`, `QuestionResult`, and single-question `AskToolDetails`: the label of the option an ask note is on (unset for a note on the custom answer) ([#17126](https://github.com/can1357/oh-my-pi/pull/17126) by [@H4vC](https://github.com/H4vC))
 
 ### Changed
 
@@ -2514,3 +2574,4 @@
 - Fixed slash-command autocomplete repainting when a Windows Terminal session cannot report native scrollback position; live input renders can now bypass the unknown-viewport deferral without weakening background scrollback protection. ([#1550](https://github.com/can1357/oh-my-pi/issues/1550))
 
 Older entries are archived in [packages/tui/CHANGELOG.md@539f05ae39f8](https://github.com/can1357/oh-my-pi/blob/539f05ae39f81319dc75d650757dad3c76482343/packages/tui/CHANGELOG.md).
+Older entries are archived in [packages/tui/CHANGELOG.md@6693ddbfd58c](https://github.com/can1357/oh-my-pi/blob/6693ddbfd58ce9edcdc0dc3fe98a8882c9bae834/packages/tui/CHANGELOG.md).

@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "bun:test";
+import { afterAll, afterEach, describe, expect, it } from "bun:test";
+import * as nodeFs from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -21,7 +22,11 @@ function makeSkillMd(name: string, dir: string) {
 	return `---\nname: ${name}\ndescription: ${name} skill.\n---\n\n# ${name} from ${dir}\n`;
 }
 
+const isolatedProjectDir = nodeFs.mkdtempSync(path.join(os.tmpdir(), "skills-customdirs-project-"));
+// `loadSkills` otherwise defaults `cwd` to the real repo, whose gitignored
+// `.omp/plugins` installs are not controlled by the flags below.
 const ALL_DEFAULT_SOURCES_DISABLED = {
+	cwd: isolatedProjectDir,
 	enableCodexUser: false,
 	enableClaudeUser: false,
 	enableClaudeProject: false,
@@ -30,6 +35,10 @@ const ALL_DEFAULT_SOURCES_DISABLED = {
 	enableAgentsUser: false,
 	enableAgentsProject: false,
 } as const;
+
+afterAll(async () => {
+	await fs.rm(isolatedProjectDir, { recursive: true, force: true });
+});
 
 describe("skill:// resolution honors skills.customDirectories (#7190)", () => {
 	const tempDirs: string[] = [];

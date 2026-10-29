@@ -178,8 +178,8 @@ export interface CompressGcResult {
 	allocatedAfter: number;
 	/** Scratch directories a killed run left behind; removed with `--apply`. */
 	leftoverScratchDirs: number;
-	/** Why the pass was skipped though the filesystem supports compression: the method did not shrink a probe file. */
-	unavailable?: string;
+	/** Why the pass was skipped though the filesystem supports compression: no tool shrank a probe file. */
+	probeFailure?: string;
 	/** Why `--apply` stopped copying part-way: nothing shrank. Later files were left alone. */
 	stopped?: string;
 	/** Files left alone after the run stopped. */
@@ -1984,17 +1984,26 @@ async function runCompressGc(options: ResolvedGcOptions, archiveRoot: string): P
 			result.errors,
 		);
 	}
-	// A volume can report support while its tool stores everything uncompressed (macOS 27's
-	// `ditto --hfsCompression`); the pass would then copy every file for no savings.
-	const probe = await probeCompression(sessionsRoot, method);
-	if (probe.unavailable !== undefined) {
-		result.unavailable = probe.unavailable;
-		return result;
+	// Probe only on apply, after the sweep: a tool that stores files uncompressed
+	// would copy every file for no savings, and a dry run never compresses.
+	let tool: string | undefined;
+	if (options.apply) {
+		try {
+			const probe = await probeCompression(sessionsRoot, method);
+			if (probe.unavailable !== undefined) {
+				result.probeFailure = probe.unavailable;
+				return result;
+			}
+			tool = probe.tool;
+		} catch (error) {
+			result.errors.push(`compression probe: ${errorMessage(error)}`);
+			return result;
+		}
 	}
 	const sessions = await listActiveSessions(sessionsRoot);
 	result.scanned = sessions.length;
 	const cutoffMs = Date.now() - Math.max(options.compressAfterDays * DAY_MS, GC_WRITE_GRACE_MS);
-	const run = createCompressRun(COMPRESS_CONCURRENCY, probe.tool);
+	const run = createCompressRun(COMPRESS_CONCURRENCY, tool);
 	// Sessions compress concurrently; `run` caps the directory copies in flight across all of them.
 	const inFlight = new Set<Promise<void>>();
 	for (const session of sessions) {
@@ -2330,22 +2339,19 @@ function renderText(result: GcResult): string {
 		const compress = result.compress;
 		if (!compress.supported) {
 			lines.push("compress: unsupported on this filesystem (APFS or NTFS only)");
-		} else if (compress.unavailable !== undefined) {
-			lines.push(`compress: unavailable (${compress.unavailable})`);
-			if (compress.leftoverScratchDirs > 0) {
-				const verb = result.apply ? "removed" : "found";
-				lines.push(`compress leftover scratch dirs ${verb}: ${compress.leftoverScratchDirs}`);
-			}
-			if (compress.errors.length > 0) lines.push(`compress errors: ${compress.errors.length}`);
 		} else {
-			const after = result.apply ? `, ${formatBytes(compress.allocatedAfter)} after` : "";
-			lines.push(
-				`compress: ${compress.compressed}/${compress.wouldCompress} files in ${compress.sessions} sessions, ${formatBytes(compress.allocatedBefore)} on disk before${after}`,
-			);
-			if (compress.stopped !== undefined) {
-				lines.push(`compress stopped: ${compress.stopped}; ${compress.skippedAfterStop} files left alone`);
+			if (compress.probeFailure !== undefined) {
+				lines.push(`compress skipped: ${compress.probeFailure}`);
+			} else {
+				const after = result.apply ? `, ${formatBytes(compress.allocatedAfter)} after` : "";
+				lines.push(
+					`compress: ${compress.compressed}/${compress.wouldCompress} files in ${compress.sessions} sessions, ${formatBytes(compress.allocatedBefore)} on disk before${after}`,
+				);
+				if (compress.stopped !== undefined) {
+					lines.push(`compress stopped: ${compress.stopped}; ${compress.skippedAfterStop} files left alone`);
+				}
+				if (compress.skippedLive > 0) lines.push(`compress skipped live: ${compress.skippedLive}`);
 			}
-			if (compress.skippedLive > 0) lines.push(`compress skipped live: ${compress.skippedLive}`);
 			if (compress.leftoverScratchDirs > 0) {
 				const verb = result.apply ? "removed" : "found";
 				lines.push(`compress leftover scratch dirs ${verb}: ${compress.leftoverScratchDirs}`);

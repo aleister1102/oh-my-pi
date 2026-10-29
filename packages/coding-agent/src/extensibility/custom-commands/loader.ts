@@ -12,13 +12,8 @@ import { getAgentDir, getProjectDir, isEnoent, logger } from "@oh-my-pi/pi-utils
 import { getConfigDirs } from "../../config";
 
 import { execCommand } from "../../exec/exec";
-// Runtime self-reference: type-only so the barrel's module graph is not
-// evaluated when this loader loads. `loadPiCodingAgentNamespace()` resolves the real
-// ESM namespace on first command binding, which keeps the index.ts cycle safe
-// (same idiom as the extensions loader) while preserving object identity with
-// the statically imported host namespace.
+import { getCodingAgentApi } from "../host-api";
 import * as typebox from "../legacy-typebox";
-import { loadPiCodingAgentNamespace } from "../package-namespace";
 import { GreenCommand } from "./bundled/ci-green";
 import { AnnotateCommand } from "./bundled/annotate";
 import { ReviewCommand } from "./bundled/review";
@@ -203,7 +198,9 @@ export async function loadCustomCommands(options: LoadCustomCommandsOptions = {}
 		typebox,
 		arktype,
 		zod,
-		pi: await loadPiCodingAgentNamespace(),
+		get pi() {
+			return getCodingAgentApi();
+		},
 	};
 
 	// 1. Load bundled commands first (lowest priority - can be overridden)

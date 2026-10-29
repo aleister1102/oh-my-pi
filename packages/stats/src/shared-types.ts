@@ -604,7 +604,7 @@ export interface TraceTrack {
 	agent: string | null;
 	/** session_init.resolvedModel ?? first assistant model. */
 	model: string | null;
-	/** Absolute transcript path (for entry fetch). */
+	/** Absolute transcript path for live entry fetch, or the embedded snapshot key. */
 	file: string;
 	/** Sorted by start. */
 	spans: TraceSpan[];
@@ -656,13 +656,14 @@ export interface SessionTrace {
 	cwd: string | null;
 	startedAt: number;
 	endedAt: number;
-	/** Root transcript mtime; part of the ETag. */
+	/** Root transcript mtime, or recorded root activity/header time for offline snapshots. */
 	mtimeMs: number;
 	/**
 	 * Conditional-request fingerprint `"<rootMs>:<rootSize>:<digest>"` (see
 	 * traceFingerprintForEtag): the digest folds the child-transcript set into a
 	 * fixed-size key, so a subagent-only append changes the ETag even when the
-	 * root is untouched without making `If-None-Match` unbounded.
+	 * root is untouched without making `If-None-Match` unbounded. Offline
+	 * snapshots use "snapshot" and do not support HTTP revalidation.
 	 */
 	etag: string;
 	/** DFS order, main first. */

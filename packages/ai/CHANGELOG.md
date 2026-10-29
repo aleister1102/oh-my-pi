@@ -2,6 +2,58 @@
 
 ## [Unreleased]
 
+## [18.14.0] - 2026-10-29
+
+### Breaking Changes
+
+- Moved Anthropic header and endpoint helpers, along with Codex session/transport inspection and OpenAI Responses replay/storage helpers, to dedicated provider modules. Update imports from the previous locations.
+- Updated auth-gateway model resolvers to receive `ModelResolveOptions`, including the route's native API wire and the scoped client's accepted grants. Scoped client IDs no longer fall back to scanning all models; resolvers now select the best permitted candidate.
+
+### Added
+
+- Added mTLS support for Anthropic connections through the `CLAUDE_CODE_CLIENT_CERT` and `CLAUDE_CODE_CLIENT_KEY` environment variables.
+
+### Changed
+
+- Provider implementations are now loaded on demand, reducing startup and memory overhead while preserving existing stream timeouts, cancellation, and host overrides.
+- Account policy `priority` now takes precedence when usage information is temporarily unavailable, keeping new sessions on the preferred account.
+- Improved provider-specific credential usage lookups so they no longer wait for unrelated providers, while preserving cache freshness, cancellation isolation, and complete aggregate reports. The corresponding server-side latency improvement requires an updated auth broker.
+- Credential usage is now prefetched during session setup without selecting, pinning, or advancing the OAuth account rotation.
+
+### Fixed
+
+- Fixed Mistral thinking-message replay requests that could be rejected by LiteLLM with a `422 extra_forbidden` error.
+- Fixed native Judge API requests missing the `omp/<version>` User-Agent, so omp usage is correctly identified in upstream statistics.
+- Fixed Codex capacity-error retries over WebSocket and SSE ignoring provider-supplied `Retry-After` delays and retrying too early.
+- Fixed cancelled OAuth refresh requests aborting the entire session, and ensured requests joining an existing refresh can still use the refreshed credential when the original request is cancelled.
+- Fixed Cursor models losing omp system-prompt context, including context files, skills, and rules, on subsequent turns or when earlier messages precede the active turn.
+- Fixed short-lived commands that refresh OAuth credentials, such as `omp token --force-refresh`, remaining open for several seconds after completing.
+- Fixed TypeSafe authentication when `TYPESAFE_BASE_URL` is configured by validating keys against the correct `/v1/models` endpoint.
+- Fixed forced tool calls on non-reasoning models causing an unhandled reasoning-effort error.
+- Fixed interrupted turns reporting a transport error instead of the caller-provided cancellation reason.
+- Fixed long-running pi-native turns being terminated before their first event by fetch or proxy timeouts by supporting keepalives and the configured first-event timeout.
+- Fixed pi-native clients crashing when the auth gateway reports an upstream failure during streaming.
+- Fixed Cursor turns failing after a mid-turn stream interruption when an automatic retry receives a zero-token provider error; retries now continue on the rotated conversation.
+- Corrected auth-gateway debug logs so they no longer claim a retry occurred when a usage-limit error was returned without retrying.
+
+## [18.13.3] - 2026-10-28
+
+### Changed
+
+- Updated Bun engine requirement to ≥1.4.4
+
+## [18.13.2] - 2026-10-27
+
+### Fixed
+
+- Fixed OAuth logins shared by several processes being disabled with `invalid_grant` when they refreshed at the same time or one of them quit mid-refresh ([#17128](https://github.com/can1357/oh-my-pi/pull/17128) by [@sjawhar](https://github.com/sjawhar))
+- Fixed transient Google 429 rate-limit and capacity responses retrying in place without blocking or rotating credentials, while daily caps and zero-entitlement limits still rotate ([#17127](https://github.com/can1357/oh-my-pi/pull/17127) by [@GTanger](https://github.com/GTanger))
+- Fixed Aliyun DashScope's multimodal gateway failing a turn on its intermittent `InvalidParameter` 400s for valid inline images ("provided URL does not appear to be valid", "Download multimodal file timed out"); they are now retried ([#17101](https://github.com/can1357/oh-my-pi/pull/17101) by [@shuairongzeng](https://github.com/shuairongzeng))
+- Fixed a revoked or rejected GitHub Copilot credential continuing to show its last cached usage quota instead of being dropped ([#17081](https://github.com/can1357/oh-my-pi/issues/17081))
+- Fixed Devin requests compressing the request body on the UI thread, which briefly froze the TUI on long conversations; requests under 1 KiB are now sent uncompressed
+
+## [18.13.1] - 2026-10-27
+
 ### Fixed
 
 - Codex accounts whose spend cap is used up are no longer picked through credit overage or from usage cached before the upgrade ([#16973](https://github.com/can1357/oh-my-pi/pull/16973) by [@DusKing1](https://github.com/DusKing1))
@@ -2271,56 +2323,4 @@
 
 - Removed Pi dialect support and related serialization/parsing logic.
 
-## [16.2.0] - 2026-06-27
-
-### Breaking Changes
-
-- Removed the `@oh-my-pi/pi-ai/utils/json-parse` module. The JSON repair and parsing helpers (`repairJson`, `parseJsonWithRepair`, `parseStreamingJson`, `parseStreamingJsonThrottled`) have been moved to `@oh-my-pi/pi-utils` to be shared across utilities.
-
-### Added
-
-- Added the GitLab Duo Agent provider (`gitlab-duo-agent`) and built-in implementation, renaming the existing AI Gateway proxy provider to "GitLab Duo Non-Agentic" (`gitlab-duo`).
-- Added GitLab Duo Workflow provider support, featuring OAuth login via the official VS Code OAuth application, automatic project discovery, and automatic session-time namespace Duo settings enablement.
-- Added runaway detection for Gemini models to interrupt streams stuck in excessive planning steps.
-- Added a per-provider in-flight request limiter for LLM streams, shared across local OMP processes and configurable via `maxInFlightRequests`.
-- Added a `credits` field to `UsageResetCredits` to display when banked rate-limit resets expire, with support for OpenAI Codex usage details.
-
-### Changed
-
-- Optimized GitLab Duo Agent and Workflow providers to use an inline custom "ambient" flow with MCP-only agent privileges, registering MCP tools under their bare names.
-- Improved GitLab Duo Agent context management and auto-compaction by lowering the soft overflow threshold to 1 MB and stripping redundant bytes (such as tool-call UUIDs and escaped JSON) from the goal transcript.
-- Enhanced GitLab Duo Agent prompt engineering to render replayed tool calls as past-tense records, reducing model confusion and preventing the model from mimicking historical markers.
-- Added caching for discovered GitLab Duo Agent root namespaces per account to avoid redundant discovery requests.
-
-### Fixed
-
-- Fixed various GitLab Duo Agent and Workflow stability issues, including infinite tool-call loops, connection hangs on half-open WebSockets, and unhandled step-limit or generic server-side failures.
-- Improved GitLab Duo Workflow routing, namespace resolution, and project-path handling, ensuring correct numeric ID resolution and support for self-managed GitLab relative install base paths.
-- Fixed GitLab Duo Workflow checkpoint streaming to correctly map reasoning entries to thinking blocks, preserve tool boundaries, and accurately report token usage.
-- Fixed `AuthStorage.login` to only synthesize manual-code paste prompts for paste-code providers, preventing terminal-blocking races on loopback OAuth flows.
-- Fixed llama.cpp compatibility by downgrading named forced `tool_choice` objects to the string `"required"` in the chat-completions encoder.
-- Fixed `omp usage` omitting Ollama and Ollama Cloud accounts by registering placeholder usage providers.
-- Fixed Gemini reasoning-runaway detection to expose a dedicated thought-summary header guard to interrupt streams stuck in planning loops.
-
-### Removed
-
-- Removed legacy GitLab Duo Workflow `chat` and `software_development` flow paths and the non-MCP action bridge in favor of the inline custom `ambient` flow.
-
-## [16.1.23] - 2026-06-26
-
-### Added
-
-- Added a third streaming thinking-loop detection heuristic to catch "progress-lexicon stalls" where models endlessly reshuffle motivational filler without introducing new vocabulary or concrete technical references
-- Added branded wordmark and logo animation to authentication flow
-- Added a third streaming thinking-loop detection shape — a _progress-lexicon stall_ — alongside verbatim tail repetition and near-duplicate (trigram) segments. It catches reasoning-summarizer loops that reshuffle the same motivational filler ("just doing it, pushing ahead, maintaining momentum") into fresh word order every paragraph: word-trigrams never cluster, but a run of substantial segments that recycle the recent vocabulary and introduce no _new_ concrete reference (path / identifier / code-span) trips the guard. Summarizer title/heading lines (`**Bold Title**`, `## Heading`) are stripped before analysis so their ever-changing wording cannot mask the stall by inflating novelty. Calibrated against 537k real non-Gemini reasoning blocks (zero false positives at novelty floor 0.2 / run length 8; the real loop sustains runs of 10+).
-- Added CoreWeave Serverless Inference provider login support via `COREWEAVE_API_KEY` and `WANDB_API_KEY` fallback.
-
-### Changed
-
-- Redesigned the OAuth callback page (`oauth.html`) to match the oh-my-pi web brand language: OKLCH purple-tinted dark neutrals, magenta→iris→cyan brand gradient on the wordmark, frosted-glass card over an ascii grid backdrop, and a colored status halo around the success/error icon. All assets are inlined; the `__OAUTH_STATE__` injection contract and success/error JS logic are unchanged.
-
-### Fixed
-
-- Fixed local llama.cpp (and any local OpenAI-compatible server rendering the Qwen3.6+ chat template) re-processing the full prompt every new user message even with `replayReasoningContent` enabled (#3541 follow-up to #3528). Sending `reasoning_content` alone wasn't enough: Qwen3's chat template strips `<think>...</think>` from any assistant turn whose index is `<= last_query_index`, so the moment a new user message (the user's next prompt, or the auto-learn capture-at-stop nudge) lands, every prior assistant turn becomes "older" and is re-rendered without the `<think>` block — diverging from the generation tokens still in the slot's KV cache. The chat-completions encoder now emits `preserve_thinking: true` for Qwen thinking dialects on local servers, route-split the same way the existing `enable_thinking` emission is: the `qwen` dialect rides the top-level field (llama.cpp's `--jinja` hook and Alibaba Cloud Model Studio's compatible-mode), the `qwen-chat-template` dialect (NVIDIA NIM, vLLM/SGLang's chat-template-kwargs path) rides only `chat_template_kwargs.preserve_thinking` because NIM's request schema is `additionalProperties: false` and rejects unknown top-level fields (#2299). The emission is hoisted above the `reasoning.enabled` gate so it fires for THREE cases the original gating missed: (1) runtime-discovered local Qwen models that ship with `reasoning: false` because the upstream `/v1/models` doesn't advertise the capability (same gotcha #3532 fixed for `replayReasoningContent`), (2) caller-disabled reasoning (`/think off`) — the kwarg is a history-rendering knob, not a per-turn thinking switch, and the slot still holds `<think>` tokens from earlier turns, and (3) forced-tool-choice / DeepSeek-style auto-disable. Qwen3.6+ then renders `<think>...</think>` for every assistant turn regardless of position, and the next-turn render matches the cached generation tokens. ([#3541](https://github.com/can1357/oh-my-pi/issues/3541))
-
-Older entries are archived in [packages/ai/CHANGELOG.md@917a36589039](https://github.com/can1357/oh-my-pi/blob/917a365890396071a959dfd2865a3538518ef717/packages/ai/CHANGELOG.md).
+Older entries are archived in [packages/ai/CHANGELOG.md@ef4bc35e85d8](https://github.com/can1357/oh-my-pi/blob/ef4bc35e85d88932d92b01ae7121c9f47208cf40/packages/ai/CHANGELOG.md).

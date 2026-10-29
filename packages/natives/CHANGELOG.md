@@ -2,6 +2,68 @@
 
 ## [Unreleased]
 
+## [18.14.0] - 2026-10-29
+
+### Breaking Changes
+
+- Removed the `invalidateFsScanCache` API and the associated filesystem scan cache environment variables (`FS_SCAN_CACHE_TTL_MS`, `FS_SCAN_EMPTY_RECHECK_MS`, `FS_SCAN_CACHE_MAX_ENTRIES`, and `FS_SCAN_CACHE_MAX_BYTES`); filesystem listing caches are now managed automatically.
+
+### Added
+
+- Added a built-in `rsync` implementation to the bash tool, compatible with rsync 3.5.1 and protocol versions 29–33 across Linux, macOS, and Windows. It supports local copies, SSH remote shells via `-e`, and `rsync://` daemons without requiring an installed binary; daemon serving is not supported, and `PI_DISABLE_UUTILS_DESTRUCTIVE` continues to use the system `rsync`.
+- Added built-in `ast-grep` (also available as `sg`) support to the bash tool for structural code search and rewriting, including pattern matching, rewrites, context, headings, and JSON output.
+
+### Changed
+
+- Improved native filesystem search performance, including faster globbing and more efficient grep, fuzzy finding, workspace listing, and structural search/edit operations, while preserving deterministic result ordering and streaming behavior.
+- Native search and the bash tool's built-in `rg`, `grep`, `fd`, `find`, and `ast-grep` now stop filesystem work promptly when cancelled or timed out, including searches over JavaScript-provided filesystems and searches interrupted while reading large files.
+- The bash tool's built-in `rg` and recursive `grep` now search files in parallel while retaining path-ordered output; `grep` can also stop promptly after reaching `maxCount`.
+- Enabled safe reuse of unchanged directory listings when `cache: true`, with timestamp validation to prevent stale results.
+
+### Fixed
+
+- Fixed cancelled native directory searches leaving filesystem-provider requests running during startup.
+- Fixed built-in bash commands such as `cat`, `grep`, `head`, `wc`, `read`, and `mapfile` hanging at the end of FIFO input on macOS; `read -t` now returns at EOF.
+- Fixed ANSI text wrapping for styled underlines, background colours, and colon-form RGB colours.
+- Fixed clicking in native audio playback when the queue runs dry mid-waveform by smoothly fading output to silence and back.
+
+## [18.13.3] - 2026-10-28
+
+### Changed
+
+- Updated Bun engine requirement to ≥1.4.4
+
+## [18.13.2] - 2026-10-27
+
+### Added
+
+- Added opt-in, cycle-safe descendant-link traversal to native `glob` through `followLinks`, leaving default traversal unchanged ([#17180](https://github.com/can1357/oh-my-pi/pull/17180) by [@alphastorm](https://github.com/alphastorm))
+
+### Changed
+
+- Faster native line, word, and structured patch diffs on large edits ([#17015](https://github.com/can1357/oh-my-pi/pull/17015) by [@GTanger](https://github.com/GTanger))
+
+### Fixed
+
+- Fixed the built-in `sort` using many times its `-S` buffer size, or more memory than its container allows or the machine has available, on inputs of short lines, and ignoring `timeout` or a cancel while it sorts ([#17155](https://github.com/can1357/oh-my-pi/pull/17155) by [@sjawhar](https://github.com/sjawhar))
+- Fixed the built-in `sort -m` and `sort -c` splitting lines longer than their read buffer, and `sort` joining a file's unterminated last line to the next file's first line ([#17155](https://github.com/can1357/oh-my-pi/pull/17155) by [@sjawhar](https://github.com/sjawhar))
+- Fixed the built-in `sort -S N%` using the wrong buffer size: `-S 50%` gave 0 bytes and `-S 100%` a thousand times the machine's memory; it is now N percent of physical memory as in GNU sort ([#17155](https://github.com/can1357/oh-my-pi/pull/17155) by [@sjawhar](https://github.com/sjawhar))
+- Exited bash-tool `&` jobs are reaped without another command; `wait` still reports their status, and `$!` works inside pipelines, subshells, and command substitutions ([#17144](https://github.com/can1357/oh-my-pi/issues/17144)).
+- On macOS, the bash tool's built-in `ps` includes other users' processes and unreaped zombies when selecting a PID ([#17144](https://github.com/can1357/oh-my-pi/issues/17144)).
+- Fixed native `glob` file-type filters discarding target size and modification time for linked files ([#17180](https://github.com/can1357/oh-my-pi/pull/17180) by [@alphastorm](https://github.com/alphastorm))
+- Fixed leading UTF-8 BOMs causing embedded `jq` JSON input parse errors while preserving raw-input bytes ([#17179](https://github.com/can1357/oh-my-pi/pull/17179) by [@alphastorm](https://github.com/alphastorm))
+- Fixed the shell's `timeout` and tool aborts not stopping built-in commands that were still reading (`cat /dev/zero`, huge files, FIFOs with no writer) ([#17141](https://github.com/can1357/oh-my-pi/pull/17141) by [@sjawhar](https://github.com/sjawhar))
+- Fixed a tool abort leaving a background in-process command, such as `cat /dev/zero > /dev/null &`, running and keeping a core busy after its shell session was gone ([#17141](https://github.com/can1357/oh-my-pi/pull/17141) by [@sjawhar](https://github.com/sjawhar))
+- Fixed a shell redirect to or from a FIFO whose other end is a background job, such as `echo hi > f & cat < f`, hanging the command; a tool abort now also stops a write redirect to a FIFO that has no reader ([#17141](https://github.com/can1357/oh-my-pi/pull/17141) by [@sjawhar](https://github.com/sjawhar))
+- Fixed a background external command with a FIFO redirect, such as `/bin/cat < f & echo hi > f`, hanging the shell until the FIFO's other end opened; the command's own process now opens it, as in bash ([#17141](https://github.com/can1357/oh-my-pi/pull/17141) by [@sjawhar](https://github.com/sjawhar))
+- Fixed `timeout` printing `error: interrupted` when its limit stopped a built-in command; like GNU `timeout`, it now prints nothing of its own and exits 124 ([#17141](https://github.com/can1357/oh-my-pi/pull/17141) by [@sjawhar](https://github.com/sjawhar))
+- Fixed crackling in live voice playback: the assistant's speech now absorbs packet jitter without dropping out, short turns play without waiting for the next response, and lost packets no longer insert extra synthesized audio ([#17114](https://github.com/can1357/oh-my-pi/issues/17114))
+- Fixed the bash tool's `rm -r` and `du` crashing the whole session with a stack overflow on a directory tree thousands of levels deep; `rm -r` also removes such a tree without running out of file descriptors, and reports a directory that is its own ancestor instead of descending into it ([#17021](https://github.com/can1357/oh-my-pi/pull/17021) by [@sjawhar](https://github.com/sjawhar))
+- Fixed the bash tool's `find` panicking and writing a native panic report to `~/.omp/logs` when the command reading its output exits early, as in `find . -printf '%p\n' | head -1`, or when its stderr is closed; it now stops quietly, and a failed `-fprintf` write is reported instead of `find: internal error` ([#17079](https://github.com/can1357/oh-my-pi/pull/17079) by [@trukhinyuri](https://github.com/trukhinyuri))
+- Fixed the shell's built-in `grep` and `rg` running the whole agent out of memory on a file with no line breaks, such as a large sparse file: a line over 256 MiB is now reported as `not searched` for that file and the search continues, and a `-f` pattern file over 256 MiB is refused with exit status 2 ([#17108](https://github.com/can1357/oh-my-pi/pull/17108) by [@sjawhar](https://github.com/sjawhar))
+- Fixed the embedded shell's globs keeping matches whose literal tail does not exist: `ls -d DIR/*/` now lists only directories instead of passing every file as `file/`, and `*/name` keeps only matches that contain `name`, as in bash ([#17110](https://github.com/can1357/oh-my-pi/pull/17110) by [@sjawhar](https://github.com/sjawhar))
+- Fixed the embedded shell ignoring `shopt -s globstar`: `**` now matches any number of directory levels as in bash (`**/*.rs` finds files at every depth, also in `compgen -G`), and a timeout or interrupt stops a long `**` expansion ([#17111](https://github.com/can1357/oh-my-pi/pull/17111) by [@sjawhar](https://github.com/sjawhar))
+
 ## [18.13.0] - 2026-10-26
 
 ### Added
