@@ -648,6 +648,54 @@ describe("async speculative compaction", () => {
 		expect(agent.state.messages[0]).toEqual(freshUser);
 	});
 
+	it("discards an armed summary that would not shrink the context even without later turns", async () => {
+		let invocation = 0;
+		const compactSpy = vi.spyOn(compactionModule, "compact").mockImplementation(async preparation => ({
+			summary: ++invocation === 1 ? "expanding summary ".repeat(40_000) : `summary ${invocation}`,
+			firstKeptEntryId: preparation.firstKeptEntryId,
+			tokensBefore: preparation.tokensBefore,
+			details: {},
+		}));
+		maintenance.maybeStartSpeculativeCompaction(SPECULATION_BAND_START, CONTEXT_WINDOW);
+		await waitForState("armed");
+
+		await maintenance.runAutoCompaction("threshold", false, { triggerContextTokens: THRESHOLD });
+
+		expect(compactSpy).toHaveBeenCalledTimes(2);
+		const entry = sessionManager.getEntries().findLast(item => item.type === "compaction");
+		expect(entry?.type === "compaction" ? entry.summary : undefined).toBe("summary 2");
+	});
+
+	it("re-summarizes the history behind a remote compaction the active model cannot replay", async () => {
+		sessionManager.appendCompaction("remote placeholder", undefined, "", THRESHOLD, {
+			method: "remote",
+			preserveData: {
+				openaiRemoteCompaction: {
+					provider: "openai",
+					replacementHistory: [{ role: "user", content: [{ type: "input_text", text: "opaque" }] }],
+				},
+			},
+		});
+		sessionManager.appendMessage(userMessage("later request ".repeat(400)));
+		sessionManager.appendMessage(assistantMessage("later response ".repeat(400), model));
+		sessionManager.appendMessage(userMessage("retained request"));
+		agent.replaceMessages(sessionManager.buildSessionContext().messages);
+		let summarized: AgentMessage[] = [];
+		vi.spyOn(compactionModule, "compact").mockImplementation(async preparation => {
+			summarized = preparation.messagesToSummarize;
+			return {
+				summary: "local summary",
+				firstKeptEntryId: preparation.firstKeptEntryId,
+				tokensBefore: preparation.tokensBefore,
+				details: {},
+			};
+		});
+
+		await maintenance.runAutoCompaction("threshold", false, { triggerContextTokens: THRESHOLD });
+
+		expect(JSON.stringify(summarized)).toContain("conversation conversation");
+	});
+
 	it("suppresses speculation at a dead-end cut point and re-arms when the cut point advances", async () => {
 		sessionManager = SessionManager.inMemory();
 		sessionManager.appendMessage(userMessage("earlier request ".repeat(400)));
