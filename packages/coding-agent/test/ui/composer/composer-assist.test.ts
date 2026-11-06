@@ -130,6 +130,19 @@ describe("macOS spelling", () => {
 		});
 	});
 
+	test("autocorrects before the caret using the whole logical line as context", async () => {
+		const checker = new MacOSSpellingProvider({
+			...backend,
+			autocorrectWord: async (line, start, length) =>
+				line === "we recieved more" && line.slice(start, start + length) === "recieved" ? "received" : null,
+		});
+		checker.setFeatures({ typoDetection: false, autocorrect: true });
+		expect(await checker.tryAutocorrect(["an earlier line", "we recieved more"], 1, "we recieved ".length)).toEqual({
+			replaceLen: "recieved ".length,
+			insert: "received ",
+		});
+	});
+
 	test("lists replacements for the word at the caret; accepting one replaces it", async () => {
 		await createRoot(async dispose => {
 			const { composer, term } = setup({ typoDetection: true, autocorrect: false });
