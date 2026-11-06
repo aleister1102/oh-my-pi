@@ -22,6 +22,9 @@
 ### Changed
 
 - Resuming a long session reads only the entry types it needs for transcript replay, the compaction notice, Hindsight message extraction and vibe session recovery, instead of decoding the whole journal
+### Changed
+
+- Extension event handlers run under a loop phase naming the extension and event, so `ui.loop-blocked` attributes a synchronous block in their handler to that extension instead of "unknown".
 
 ## [18.17.0] - 2026-11-06
 
