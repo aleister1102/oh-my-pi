@@ -148,6 +148,9 @@ import {
 	cfgStatusLineSessionAccent,
 	cfgStatusLineShowHookStatus,
 	cfgStatusLineTransparent,
+	cfgSpellingAutocomplete,
+	cfgSpellingAutocorrect,
+	cfgSpellingTypoDetection,
 	cfgTreeFilterMode,
 } from "../settings";
 import { cfgTaskAgentModelOverrides } from "../../task/settings";
@@ -516,6 +519,11 @@ export class SelectorController {
 				externalEditor: text => {
 					const command = getEditorCommand();
 					return command ? openInEditor(command, text) : Promise.resolve(null);
+				},
+				spellingFeatures: {
+					typoDetection: cfgSpellingTypoDetection.get(this.ctx.settings),
+					autocomplete: cfgSpellingAutocomplete.get(this.ctx.settings),
+					autocorrect: cfgSpellingAutocorrect.get(this.ctx.settings),
 				},
 				scopedModels: this.ctx.session.scopedModels,
 				availableToolNames: this.ctx.session.getAdvisorAvailableToolNames(),
