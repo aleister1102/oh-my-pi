@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Resuming a long session reads only the entry types it needs for transcript replay, the compaction notice, Hindsight message extraction and vibe session recovery, instead of decoding the whole journal
+
 ## [18.17.0] - 2026-11-06
 
 ### Added

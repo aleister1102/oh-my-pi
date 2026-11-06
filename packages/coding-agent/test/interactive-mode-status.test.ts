@@ -36,6 +36,8 @@ function createInitialRenderHarness(): { ctx: InteractiveModeContext; helpers: U
 		sessionManager: {
 			buildSessionContext: () => buildSessionContext([]),
 			getEntries: () => [],
+			getEntryCount: () => 0,
+			iterateEntries: () => [],
 		},
 		statusLine: { invalidate: vi.fn() },
 		updateEditorBorderColor: vi.fn(),
@@ -56,6 +58,8 @@ function createInitialRenderHarness(): { ctx: InteractiveModeContext; helpers: U
 				buildSessionContext: () => buildSessionContext([]),
 				getEntries: () => [],
 				getConversationTip: () => undefined,
+				getEntryCount: () => 0,
+				iterateEntries: () => [],
 			},
 		},
 		get viewSession() {
