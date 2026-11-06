@@ -594,7 +594,7 @@ export class SessionEntryIndex {
 	// leaf appends to the issued view in O(1); a leaf change or rebuild starts
 	// a fresh array. Weak ownership lets dropped historical views be collected.
 	#generation = 0;
-	// Advances on branch or payload changes; negative branch lookups key on it.
+	// Advances when the active branch is replaced or a payload changes; appends that extend the leaf keep it.
 	#branchRevision = 0;
 	#metadataCache: { generation: number; leaf: string | null | undefined; path: IndexedSessionEntry[] } | undefined;
 	#branchCache: { leaf: string | null; generation: number; branch: WeakRef<SessionEntry[]> } | undefined;
@@ -677,17 +677,16 @@ export class SessionEntryIndex {
 		const nextLeaf = sessionEntryLeafId(entry);
 		this.#leaf = nextLeaf;
 		this.#generation++;
-		this.#branchRevision++;
+		const extendsLeaf = isNew && nextLeaf === entry.id && entry.parentId === previousLeaf;
+		if (!extendsLeaf) this.#branchRevision++;
 		const cache = this.#branchCache;
 		const branch = cache?.branch.deref();
 		if (
-			isNew &&
-			nextLeaf === entry.id &&
+			extendsLeaf &&
 			cache !== undefined &&
 			branch !== undefined &&
 			cache.generation === this.#generation - 1 &&
 			cache.leaf === previousLeaf &&
-			entry.parentId === previousLeaf &&
 			entry.parentId !== null
 		) {
 			branch.push(entry);
@@ -807,6 +806,22 @@ export class SessionEntryIndex {
 
 	branchRevision(): number {
 		return this.#branchRevision;
+	}
+
+	/** Active-branch metadata from the leaf toward the root, produced lazily so a caller can stop early. */
+	*leafToRootMetadata(): IterableIterator<SessionContextEntryMetadata> {
+		const seen = new Set<string>();
+		let current = this.#leaf ? this.#entriesById.get(this.#leaf) : undefined;
+		while (current && !seen.has(current.id)) {
+			const retained = this.retainedEntry(current.id);
+			if (retained) {
+				Object.assign(current, sessionContextEntryMetadata(retained));
+				if (retained.type === "compaction") current.firstKeptEntryId = retained.firstKeptEntryId;
+			}
+			seen.add(current.id);
+			yield current;
+			current = current.parentId ? this.#entriesById.get(current.parentId) : undefined;
+		}
 	}
 
 	#metadataLeafPath(id: string | null | undefined = this.#leaf): IndexedSessionEntry[] {
@@ -4241,24 +4256,27 @@ export class SessionManager {
 
 	/**
 	 * Newest current-branch entry whose payload-free metadata matches (and, when
-	 * given, whose payload passes `accept`). Walks leaf-to-root and reads only
-	 * metadata-matching candidates, so a long branch is never materialized.
+	 * given, whose payload passes `accept`). Walks leaf-to-root, stops at the
+	 * first hit or before `stopAtId`, and reads only metadata-matching
+	 * candidates, so a long branch is never materialized.
 	 */
 	findLastBranchEntry<T extends SessionEntry>(
 		predicate: (metadata: SessionContextEntryMetadata) => boolean,
 		accept: (entry: SessionEntry) => entry is T,
+		stopAtId?: string,
 	): T | undefined;
 	findLastBranchEntry(
 		predicate: (metadata: SessionContextEntryMetadata) => boolean,
 		accept?: (entry: SessionEntry) => boolean,
+		stopAtId?: string,
 	): SessionEntry | undefined;
 	findLastBranchEntry(
 		predicate: (metadata: SessionContextEntryMetadata) => boolean,
 		accept?: (entry: SessionEntry) => boolean,
+		stopAtId?: string,
 	): SessionEntry | undefined {
-		const path = this.#index.metadataPath();
-		for (let index = path.length - 1; index >= 0; index--) {
-			const metadata = path[index]!;
+		for (const metadata of this.#index.leafToRootMetadata()) {
+			if (metadata.id === stopAtId) return undefined;
 			if (!predicate(metadata)) continue;
 			const entry = this.#index.get(metadata.id, false);
 			if (entry && (!accept || accept(entry))) return entry;
@@ -4276,7 +4294,7 @@ export class SessionManager {
 		return this.#index.branchView();
 	}
 
-	/** Advances on every change to the active branch or its payloads. */
+	/** Advances when the active branch is replaced or an entry's payload changes; appending to the leaf keeps it. */
 	getBranchRevision(): number {
 		return this.#index.branchRevision();
 	}

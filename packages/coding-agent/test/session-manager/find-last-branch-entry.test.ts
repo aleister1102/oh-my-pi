@@ -37,4 +37,35 @@ describe("SessionManager.findLastBranchEntry", () => {
 		manager.appendModelChange("anthropic/claude-sonnet-4-5", "default");
 		expect(manager.findLastBranchEntry(metadata => metadata.type === "compaction")).toBeUndefined();
 	});
+
+	it("stops before stopAtId without visiting older entries", () => {
+		const manager = SessionManager.inMemory();
+		manager.appendCustomEntry("digest", "old");
+		const stopId = manager.appendModelChange("anthropic/claude-sonnet-4-5", "default");
+		const newerId = manager.appendModelChange("anthropic/claude-sonnet-4-6", "slow");
+		const visited: string[] = [];
+		const found = manager.findLastBranchEntry(
+			metadata => {
+				visited.push(metadata.id);
+				return metadata.customType === "digest";
+			},
+			undefined,
+			stopId,
+		);
+		expect(found).toBeUndefined();
+		expect(visited).toEqual([newerId]);
+	});
+});
+
+describe("SessionManager.getBranchRevision", () => {
+	it("keeps its value across appends to the leaf and advances when the branch is replaced", () => {
+		const manager = SessionManager.inMemory();
+		const forkPoint = manager.appendCustomEntry("digest", "first");
+		manager.appendCustomEntry("digest", "second");
+		const revision = manager.getBranchRevision();
+		manager.appendModelChange("anthropic/claude-sonnet-4-5", "default");
+		expect(manager.getBranchRevision()).toBe(revision);
+		manager.branch(forkPoint);
+		expect(manager.getBranchRevision()).not.toBe(revision);
+	});
 });
