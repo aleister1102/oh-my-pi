@@ -445,6 +445,8 @@ export class SessionTools {
 	#capturedPromptDigest: string | undefined;
 	/** Base-prompt digest each primary reply with provider output was produced under. */
 	readonly #replyPromptDigests = new WeakMap<AgentMessage, string>();
+	/** Newest recorded digest as of `leaf`, valid while the branch revision stays `revision` (appends only). */
+	#recordedDigestScan: { revision: number; leaf: string | null; digest: string | undefined } | undefined;
 	/** {@link currentPromptDigest} for the base prompt array it hashed. */
 	#currentPromptDigest: { base: readonly string[]; digest: string } | undefined;
 	/**
@@ -1726,13 +1728,22 @@ export class SessionTools {
 
 	/** Digest of the base prompt the current branch's newest reply with provider output was produced under. */
 	recordedPromptDigest(): string | undefined {
-		// Walk payload-free metadata leaf-to-root and read only the newest digest
-		// record: holding a materialized branch view here would pin every
-		// pre-compaction entry of a long session in memory.
-		const entry = this.#host.sessionManager.findLastBranchEntry(
+		// Metadata-only leaf-to-root walk: a materialized branch view would pin
+		// every pre-compaction entry of a long session. While only appends
+		// happened since the last call, it stops at the leaf that call saw.
+		const sessionManager = this.#host.sessionManager;
+		const revision = sessionManager.getBranchRevision();
+		const leaf = sessionManager.getLeafId();
+		const scan = this.#recordedDigestScan?.revision === revision ? this.#recordedDigestScan : undefined;
+		if (scan?.leaf === leaf) return scan.digest;
+		const entry = sessionManager.findLastBranchEntry(
 			metadata => metadata.type === "custom" && metadata.customType === SYSTEM_PROMPT_DIGEST_CUSTOM_TYPE,
+			undefined,
+			scan?.leaf ?? undefined,
 		);
-		return entry ? (promptDigestOfEntry(entry) ?? undefined) : undefined;
+		const digest = entry ? (promptDigestOfEntry(entry) ?? undefined) : scan?.digest;
+		this.#recordedDigestScan = { revision, leaf, digest };
+		return digest;
 	}
 
 	/** Digest of the agent's current base prompt, comparable with the digests recorded on the branch. */
@@ -1793,6 +1804,7 @@ export class SessionTools {
 	/** Drops retained transcript references when the session is disposed. */
 	releaseRestoredTranscript(): void {
 		this.#restoredTranscript = undefined;
+		this.#recordedDigestScan = undefined;
 	}
 
 	/**
