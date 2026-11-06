@@ -1376,7 +1376,7 @@ export class SessionMaintenance {
 					),
 				);
 			}
-			const pathEntries = this.#host.sessionManager.getContextBranch();
+			const pathEntries = this.#compactionPathEntries();
 			const preparation = prepareCompaction(pathEntries, effectiveSettings, activeModel, this.#tokenizer);
 			if (!preparation) {
 				// Check why we can't compact
@@ -1741,7 +1741,7 @@ export class SessionMaintenance {
 		signalController: AbortController,
 		onCommitted: () => void,
 	): Promise<CompactionResult> {
-		const entries = this.#host.sessionManager.getContextBranch();
+		const entries = this.#compactionPathEntries();
 		const settings = this.#compactionSettings;
 		const preparation = prepareCompaction(entries, settings, model, this.#tokenizer);
 		if (!preparation)
@@ -1864,7 +1864,7 @@ export class SessionMaintenance {
 			}
 			this.#fixedContextDeadEndNotifiedSessionId = undefined;
 		}
-		const branch = this.#host.sessionManager.getContextBranch();
+		const branch = this.#compactionPathEntries();
 		const preparation = prepareCompaction(branch, settings, model, this.#tokenizer);
 		if (!preparation) return COMPACTION_CHECK_BLOCK_AUTOMATIC_CONTINUATION;
 		const sourceLeafId = branch.at(-1)?.id;
@@ -1904,7 +1904,7 @@ export class SessionMaintenance {
 				const hookResult = (await this.#host.extensionRunner.emit({
 					type: "session_before_compact",
 					preparation,
-					branchEntries: this.#host.sessionManager.getContextBranch(),
+					branchEntries: branch,
 					customInstructions: undefined,
 					signal: controller.signal,
 				})) as SessionBeforeCompactResult | undefined;
@@ -2226,7 +2226,7 @@ export class SessionMaintenance {
 		this.cancelSpeculation();
 		const model = this.#model;
 		if (!model) throw new Error("No model selected for handoff");
-		const entries = this.#host.sessionManager.getContextBranch();
+		const entries = this.#compactionPathEntries();
 		const messageCount = entries.filter(e => e.type === "message").length;
 		if (messageCount < 2) throw new Error("Nothing to hand off (no messages yet)");
 		const compactionSettings = this.#compactionSettings;
@@ -2418,7 +2418,7 @@ export class SessionMaintenance {
 		if (!model) return clear();
 		const settings = this.#compactionSettings;
 		const effectiveSettings = resolveMethodSettings(settings, method);
-		const branch = this.#host.sessionManager.getContextBranch();
+		const branch = this.#compactionPathEntries();
 		const snapshotLeafId = branch[branch.length - 1]?.id;
 		if (!snapshotLeafId) return clear();
 		const preparation = prepareCompaction(branch, effectiveSettings, model, this.#tokenizer);
@@ -2501,6 +2501,20 @@ export class SessionMaintenance {
 	}
 
 	/**
+	 * Entries `prepareCompaction` reads. The collapsed context closure covers a
+	 * local or Anthropic summary. A provider-native remote compaction is read in
+	 * full: a model that cannot replay it re-summarizes the history behind it
+	 * (#6343), and turns appended while it ran start at its snapshot.
+	 */
+	#compactionPathEntries(): SessionEntry[] {
+		const sessionManager = this.#host.sessionManager;
+		const latest = getLatestCompactionEntry(sessionManager.iterateBranch("compaction"));
+		return getOpenAiRemoteCompactionPayload(latest) === undefined
+			? sessionManager.getContextBranch()
+			: sessionManager.getBranch();
+	}
+
+	/**
 	 * An armed result is committable only when the branch prefix it summarized
 	 * is still intact: its snapshot leaf is on the active path with no later
 	 * compaction or reset boundary, and any provider-native replay payload is
@@ -2536,22 +2550,37 @@ export class SessionMaintenance {
 			if (entry.id === armed.snapshotLeafId) snapshotFound = true;
 		}
 		if (!snapshotFound) return false;
-		if (hasLaterEntries) {
-			const nativeAnthropic = isRecord(armed.result.preserveData?.anthropicCompaction);
-			if (!keptFound && !(nativeAnthropic && armed.result.firstKeptEntryId === "")) return false;
-			// The signed Anthropic block replaces exactly its snapshot prefix.
-			// Extra turns are outside the block, so growth alone cannot stale it.
-			if (nativeAnthropic) return true;
-
-			const projected = this.#projectCompactedContextTokens({
-				...armed.result,
-				method: armed.method,
-				providerReplayThroughEntryId:
-					armed.result.providerReplayThroughEntryId ??
-					(isRecord(armed.result.preserveData?.openaiRemoteCompaction) || (nativeAnthropic && hasLaterEntries)
-						? armed.snapshotLeafId
-						: undefined),
-			});
+		const nativeAnthropic = isRecord(armed.result.preserveData?.anthropicCompaction);
+		if (hasLaterEntries && !keptFound && !(nativeAnthropic && armed.result.firstKeptEntryId === "")) return false;
+		const projected = this.#projectCompactedContextTokens({
+			...armed.result,
+			method: armed.method,
+			providerReplayThroughEntryId:
+				armed.result.providerReplayThroughEntryId ??
+				(isRecord(armed.result.preserveData?.openaiRemoteCompaction) || (nativeAnthropic && hasLaterEntries)
+					? armed.snapshotLeafId
+					: undefined),
+		});
+		// A summary that does not shrink the context would only trigger the next compaction (#16904).
+		const branchCurrentTokens = this.#projectCurrentBranchContextTokens(this.#host.sessionManager.getContextBranch());
+		const nonMessageTokens = computeNonMessageTokens(
+			this.#host.nonMessageTokenSource(),
+			this.#tokenizer,
+			this.#host.settings.revision,
+		);
+		const emptyWrapperTokens = this.#countProjectedMessages([
+			createCompactionSummaryMessage("", 0, new Date(0).toISOString(), { method: armed.method }),
+		]);
+		const maxArmedBaseline = Math.max(
+			branchCurrentTokens,
+			armed.contextTokensAtStart,
+			armed.result.tokensBefore,
+			triggerContextTokens ?? 0,
+		);
+		if (maxArmedBaseline > emptyWrapperTokens && projected >= maxArmedBaseline) return false;
+		if (branchCurrentTokens - nonMessageTokens > emptyWrapperTokens && projected >= branchCurrentTokens) return false;
+		// The signed Anthropic block replaces exactly its snapshot prefix, so later turns cannot stale it.
+		if (hasLaterEntries && !nativeAnthropic) {
 			const pendingTokens = Math.max(0, pendingContextTokens ?? 0);
 			const projectedWithPending = projected + pendingTokens;
 			const contextWindow = model.contextWindow ?? 0;
@@ -2793,12 +2822,7 @@ export class SessionMaintenance {
 			return;
 		}
 		if (pendingMidTurnDeadEnd !== undefined) {
-			const prep = prepareCompaction(
-				this.#host.sessionManager.getContextBranch(),
-				compactionSettings,
-				model,
-				this.#tokenizer,
-			);
+			const prep = prepareCompaction(this.#compactionPathEntries(), compactionSettings, model, this.#tokenizer);
 			if (
 				prep === undefined ||
 				(pendingMidTurnDeadEnd !== null && prep.firstKeptEntryId === pendingMidTurnDeadEnd)
@@ -5330,7 +5354,7 @@ export class SessionMaintenance {
 				return COMPACTION_CHECK_NONE;
 			}
 
-			const pathEntries = this.#host.sessionManager.getContextBranch();
+			const pathEntries = this.#compactionPathEntries();
 
 			let pathEntriesForCompaction = pathEntries;
 			let preparation = prepareCompaction(pathEntriesForCompaction, effectiveSettings, this.#model, this.#tokenizer);
@@ -5372,7 +5396,7 @@ export class SessionMaintenance {
 					);
 					if (frameRescueResult) {
 						rescueRewroteHistory = true;
-						pathEntriesForCompaction = this.#host.sessionManager.getContextBranch();
+						pathEntriesForCompaction = this.#compactionPathEntries();
 						frameRescueCreatedHeadroom = this.#compactionCreatedHeadroom();
 					}
 					if (!frameRescueCreatedHeadroom) {
@@ -5382,7 +5406,7 @@ export class SessionMaintenance {
 								// Only reached when a tier actually freed something, so the
 								// branch has been rewritten either way.
 								rescueRewroteHistory = true;
-								pathEntriesForCompaction = this.#host.sessionManager.getContextBranch();
+								pathEntriesForCompaction = this.#compactionPathEntries();
 								preparation = prepareCompaction(
 									pathEntriesForCompaction,
 									effectiveSettings,
