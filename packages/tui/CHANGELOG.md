@@ -5,6 +5,7 @@
 ### Added
 
 - Enabled macOS spelling assistance (typo undercurls, Tab completions, on-space autocorrect) in the hook and ask answer editor (`HookEditorComponent`), following the `spelling.*` settings ([#12517](https://github.com/can1357/oh-my-pi/pull/12517) by [@aleister1102](https://github.com/aleister1102))
+- Skill prompt cards show a chip and line count for every skill loaded by a multi-skill prompt (`/skill:foo /skill:bar`); single-skill cards look as before ([#12535](https://github.com/can1357/oh-my-pi/pull/12535) by [@aleister1102](https://github.com/aleister1102))
 
 ## [18.17.0] - 2026-11-06
 
