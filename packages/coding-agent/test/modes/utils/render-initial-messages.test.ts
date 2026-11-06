@@ -669,19 +669,17 @@ describe("UiHelpers.renderSessionContext — mid-stream tool call rebuild", () =
 });
 
 describe("UiHelpers.renderInitialMessages — replay convergence (issue #7811)", () => {
-	/** Replace the session's entries with a list whose length follows `lengthAt(call)`. */
-	function stubEntries(harness: RenderHarness, lengthAt: (call: number) => number): void {
+	/** Simulate entries arriving during replay without materializing journal records. */
+	function stubEntryCount(harness: RenderHarness, countAt: (call: number) => number): void {
 		let call = 0;
-		spyOn(harness.ctx.viewSession.sessionManager, "getEntries").mockImplementation(
-			() => Array.from({ length: lengthAt(call++) }, () => ({ type: "message" })) as never,
-		);
+		spyOn(harness.ctx.viewSession.sessionManager, "getEntryCount").mockImplementation(() => countAt(call++));
 	}
 
 	it("terminates when entries are persisted during every replay pass", async () => {
 		// Regression: a source persisting one entry per pass made the replay restart
 		// forever (issue #7811). The loop gives up after a bounded number of restarts.
 		const harness = makeRenderCtx(makeEmptyContext());
-		stubEntries(harness, call => call + 1);
+		stubEntryCount(harness, call => call + 1);
 
 		await harness.helpers.renderInitialMessages();
 
@@ -692,7 +690,7 @@ describe("UiHelpers.renderInitialMessages — replay convergence (issue #7811)",
 
 	it("still replays once more when a single entry lands mid-replay", async () => {
 		const harness = makeRenderCtx(makeEmptyContext());
-		stubEntries(harness, call => (call === 0 ? 0 : 1));
+		stubEntryCount(harness, call => (call === 0 ? 0 : 1));
 
 		await harness.helpers.renderInitialMessages();
 

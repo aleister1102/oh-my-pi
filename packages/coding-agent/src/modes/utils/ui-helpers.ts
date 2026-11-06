@@ -929,7 +929,8 @@ export class UiHelpers {
 				keepInFlightToolCalls: ctx.viewSession.isStreaming,
 			});
 		let context = buildContext();
-		let replayEntryCount = ctx.viewSession.sessionManager.getEntries().length;
+		// Index count, not getEntries(): that decodes every journal record from disk.
+		let replayEntryCount = ctx.viewSession.sessionManager.getEntryCount();
 
 		// Build off-screen: incremental construction still yields to terminal input, while the
 		// shown transcript keeps drawing until the replacement is ready to swap in.
@@ -963,7 +964,7 @@ export class UiHelpers {
 					await ctx.renderSessionContextIncrementally(context, renderOptions);
 				}
 				if (generation !== this.#replayGeneration) return;
-				const entriesChanged = ctx.viewSession.sessionManager.getEntries().length !== replayEntryCount;
+				const entriesChanged = ctx.viewSession.sessionManager.getEntryCount() !== replayEntryCount;
 				if (!entriesChanged && passRendererSetVersion === this.#textRendererSetVersion) break;
 				replayAttempts++;
 				if (replayAttempts >= TRANSCRIPT_REPLAY_MAX_ATTEMPTS) {
@@ -973,7 +974,7 @@ export class UiHelpers {
 					logger.warn("renderInitialMessages: transcript replay did not converge; accepting current replay", {
 						attempts: replayAttempts,
 						replayEntryCount,
-						currentEntryCount: ctx.viewSession.sessionManager.getEntries().length,
+						currentEntryCount: ctx.viewSession.sessionManager.getEntryCount(),
 					});
 					break;
 				}
@@ -982,7 +983,7 @@ export class UiHelpers {
 				// initialChatRendered; discard the stale partial tree and replay the current session
 				// once more instead of letting a reentrant synchronous rebuild interleave.
 				context = buildContext();
-				replayEntryCount = ctx.viewSession.sessionManager.getEntries().length;
+				replayEntryCount = ctx.viewSession.sessionManager.getEntryCount();
 				await refreshAssistantMessageLinkTargets(ctx, assistantMessages(context));
 				if (generation !== this.#replayGeneration) return;
 				transcript.abort();
@@ -1003,11 +1004,9 @@ export class UiHelpers {
 			committed = true;
 			options.onCommit?.(context);
 
-			// Show compaction info if session was compacted.
+			// Show compaction info if session was compacted. Decode only compaction records.
 			let compactionCount = 0;
-			for (const entry of ctx.viewSession.sessionManager.getEntries()) {
-				if (entry.type === "compaction") compactionCount++;
-			}
+			for (const _ of ctx.viewSession.sessionManager.iterateEntries("compaction")) compactionCount++;
 			if (compactionCount > 0) {
 				const times = compactionCount === 1 ? "1 time" : `${compactionCount} times`;
 				ctx.showStatus(`Session compacted ${times}`);
