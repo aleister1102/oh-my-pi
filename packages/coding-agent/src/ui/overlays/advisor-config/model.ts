@@ -12,6 +12,7 @@ import type {
 	AdvisorSyncBacklog,
 	WatchdogConfigDoc,
 } from "../../../advisor/advisor-config-types";
+import type { TextAssistFeatures } from "../../composer/text-assist";
 
 /** One live advisor's usage, as the session reports it. */
 export interface AdvisorConfigStat {
@@ -56,6 +57,8 @@ export interface AdvisorConfigDeps {
 	readonly defaultToolNames: ReadonlySet<string>;
 	/** Ctrl+G in the instructions editor. */
 	externalEditor?(text: string): Promise<string | null>;
+	/** The session's spelling preferences for the prose instructions editor. */
+	readonly spellingFeatures?: TextAssistFeatures;
 	/** When set, the model picker offers only these. */
 	readonly scopedModels: ReadonlyArray<{ model: Model; thinkingLevel?: ThinkingLevel }>;
 	readonly availableToolNames: readonly string[];

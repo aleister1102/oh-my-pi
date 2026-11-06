@@ -24,6 +24,7 @@ import {
 	type KeyEvent,
 	type PasteEvent,
 	signal,
+	type TextEdit,
 	type UiEvent,
 	untrack,
 } from "@oh-my-pi/pi-tui";
@@ -39,6 +40,8 @@ import {
 import { getThinkingLevelMetadata, parseThinkingLevel } from "../../../thinking/levels";
 import { fuzzyRank } from "../../../utils/fuzzy";
 import { sanitizeDisplayWarnings } from "../../../utils/render-utils";
+import { createTextAssist, textEditForKey } from "../../composer/text-assist";
+import { TextAssistSuggestions } from "../../composer/text-assist-suggestions";
 import {
 	ADVISOR_CONFIG_ROLE,
 	ADVISOR_POINTER_ACT,
@@ -215,6 +218,15 @@ export function AdvisorConfigOverlay(props: AdvisorConfigOverlayProps): JSXNode 
 	const dirty = signal(false);
 	const reports = signal<UsageReport[] | null>(null);
 	const screen = signal<Screen>({ k: "list", cursor: 0 });
+	const assist = createTextAssist({
+		value: () => {
+			const current = screen();
+			return current.k === "instructions" ? current : { text: "", cursor: 0 };
+		},
+		apply: event => onFieldEdit(event),
+		features: () => deps.spellingFeatures ?? {},
+		active: () => screen().k === "instructions",
+	});
 	/** Bumped whenever the preview's scroll resets. */
 	const previewEpoch = signal(0);
 
@@ -767,6 +779,7 @@ export function AdvisorConfigOverlay(props: AdvisorConfigOverlayProps): JSXNode 
 				return true;
 			}
 			case "instructions": {
+				if (assist.handleKey(key)) return true;
 				if (matchesAnyKey(key, appFollowUpKeys())) {
 					submitInstructions(current);
 					return true;
@@ -781,7 +794,9 @@ export function AdvisorConfigOverlay(props: AdvisorConfigOverlayProps): JSXNode 
 				}
 				const next = editText(current, key);
 				if (!next) return false;
-				screen.set({ ...current, ...next });
+				const event = textEditForKey(current, next, key);
+				if (event) assist.edit(event, onFieldEdit);
+				else screen.set({ ...current, ...next });
 				return true;
 			}
 		}
@@ -964,7 +979,7 @@ export function AdvisorConfigOverlay(props: AdvisorConfigOverlayProps): JSXNode 
 	};
 
 	/** A native text edit on the open field (`len` guards against stale edits). */
-	const onFieldEdit = (event: Extract<UiEvent, { type: "edit" }>): void => {
+	const onFieldEdit = (event: TextEdit): void => {
 		const current = untrack(screen);
 		const apply = (text: string): LineState | undefined =>
 			event.len === text.length
@@ -1309,7 +1324,15 @@ export function AdvisorConfigOverlay(props: AdvisorConfigOverlayProps): JSXNode 
 				current.index < 0
 					? "Shared advisor instructions"
 					: `Instructions — ${advisors()[current.index]?.name ?? ""}`;
-			look = { k: "editor", title, text: current.text, cursor: current.cursor };
+			look = {
+				k: "editor",
+				title,
+				text: current.text,
+				cursor: current.cursor,
+				ghost: assist.ghost(),
+				decor: assist.decor(),
+				suggestions: assist.suggestions(),
+			};
 		}
 		return {
 			role: ADVISOR_CONFIG_ROLE,
@@ -1570,8 +1593,12 @@ export function AdvisorConfigOverlay(props: AdvisorConfigOverlayProps): JSXNode 
 						maxLines={18}
 						placeholder={current.text ? undefined : [{ t: "Type here" }]}
 						sendable={false}
-						onEdit={onFieldEdit}
+						ghost={assist.ghost}
+						decor={assist.decor}
+						onKey={assist.handleKey}
+						onEdit={event => assist.edit(event, onFieldEdit)}
 					/>
+					<TextAssistSuggestions assist={assist} />
 				</col>
 				<row key="actions" role="omp.actions" align="center" gap="sm">
 					<spacer grow={1} />

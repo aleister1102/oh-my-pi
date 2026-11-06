@@ -19,6 +19,7 @@ import { nodeState } from "@oh-my-pi/pi-tui/term/painters/state";
 import { defineRoleWidget } from "@oh-my-pi/pi-tui/term/widgets";
 import { padTo, sliceColumns, truncate, visibleWidth } from "@oh-my-pi/pi-tui/text/width";
 import type { Theme } from "@oh-my-pi/pi-tui/theme/contract";
+import type { TspEditorDecoration } from "@oh-my-pi/pi-wire";
 import { bindingGlyph, keyGlyph } from "../panels/common";
 import { appExternalEditorKeys, appFollowUpKeys } from "../../../config/keybindings/matchers";
 import { canonicalKeyId } from "../../../config/keybindings/key-id";
@@ -73,7 +74,15 @@ export type AdvisorScreenLook =
 			readonly selected: string | undefined;
 			readonly detail: string;
 	  }
-	| { readonly k: "editor"; readonly title: string; readonly text: string; readonly cursor: number };
+	| {
+			readonly k: "editor";
+			readonly title: string;
+			readonly text: string;
+			readonly cursor: number;
+			readonly ghost?: string;
+			readonly decor?: readonly TspEditorDecoration[];
+			readonly suggestions?: { readonly items: readonly string[]; readonly selected: number };
+	  };
 
 /** The look's term facts. */
 export type AdvisorLookTerm = {
@@ -362,15 +371,29 @@ function editorRows(theme: Theme, screen: Extract<AdvisorScreenLook, { k: "edito
 	out.push(boxed(frame(`${box.topLeft}──${box.horizontal.repeat(Math.max(0, inner - 6))}──${box.topRight}`)));
 	for (let r = 0; r < rows.length; r++) {
 		const row = rows[r]!;
-		let text = screen.text.slice(row.start, row.textEnd);
 		const caretHere =
 			screen.cursor >= row.start && (screen.cursor < row.end || (screen.cursor === row.end && row.last));
-		if (caretHere) {
-			const at = Math.min(screen.cursor, row.textEnd) - row.start;
-			text = `${text.slice(0, at)}▏${text.slice(at)}`;
-		}
-		const shown = theme.fgResolved("text", text);
-		const fill = " ".repeat(Math.max(0, textWidth - visibleWidth(text)));
+		const paint = (from: number, to: number): string => {
+			let text = "";
+			let at = from;
+			for (const mark of screen.decor ?? []) {
+				if (mark.to <= at) continue;
+				if (mark.from >= to) break;
+				const start = Math.max(at, mark.from);
+				const end = Math.min(to, mark.to);
+				text += screen.text.slice(at, start) + theme.style("typo", screen.text.slice(start, end));
+				at = end;
+			}
+			return text + screen.text.slice(at, to);
+		};
+		const at = Math.min(screen.cursor, row.textEnd);
+		const text = caretHere ? `${paint(row.start, at)}▏${paint(at, row.textEnd)}` : paint(row.start, row.textEnd);
+		const suffix =
+			caretHere && row.last && at === row.textEnd && screen.ghost
+				? truncate(screen.ghost, Math.max(0, textWidth - visibleWidth(text)), "")
+				: "";
+		const shown = theme.fgResolved("text", text) + (suffix ? theme.fg("dim", suffix) : "");
+		const fill = " ".repeat(Math.max(0, textWidth - visibleWidth(shown)));
 		const last = r === rows.length - 1;
 		out.push(
 			boxed(
@@ -380,6 +403,11 @@ function editorRows(theme: Theme, screen: Extract<AdvisorScreenLook, { k: "edito
 			),
 		);
 	}
+	const choices = screen.suggestions;
+	choices?.items.forEach((item, index) => {
+		const selected = index === choices.selected;
+		out.push(boxed(theme.fg(selected ? "accent" : "dim", truncate(`${selected ? "❯" : " "} ${item}`, inner, "…"))));
+	});
 	out.push(boxed(""));
 	for (const line of Bun.wrapAnsi(editorHint(), inner).split("\n")) out.push(boxed(theme.fg("dim", line)));
 	out.push(boxed(""));

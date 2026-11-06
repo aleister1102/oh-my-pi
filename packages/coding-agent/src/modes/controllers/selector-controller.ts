@@ -159,7 +159,12 @@ import { cfgAdvisorSyncBacklog } from "../../advisor/settings";
 import { cfgBranchSummaryEnabled } from "../../session/context-settings";
 import { cfgCycleOrder, cfgDisabledProviders, cfgModelRoleStorage } from "../../config/model-settings";
 import { cfgDefaultThinkingLevel, cfgRetryFallbackChains, cfgSessionWorktreeScope } from "../../session/settings";
-import { cfgTreeFilterMode } from "../settings";
+import {
+	cfgSpellingAutocomplete,
+	cfgSpellingAutocorrect,
+	cfgSpellingTypoDetection,
+	cfgTreeFilterMode,
+} from "../settings";
 import { cfgTaskAgentModelOverrides } from "../../task/settings";
 import { previewTheme } from "../../ui/theme/service";
 import { currentTheme } from "@oh-my-pi/pi-tui/theme/runtime";
@@ -526,6 +531,11 @@ export class SelectorController {
 				externalEditor: text => {
 					const command = getEditorCommand();
 					return command ? openInEditor(command, text) : Promise.resolve(null);
+				},
+				spellingFeatures: {
+					typoDetection: cfgSpellingTypoDetection.get(this.ctx.settings),
+					autocomplete: cfgSpellingAutocomplete.get(this.ctx.settings),
+					autocorrect: cfgSpellingAutocorrect.get(this.ctx.settings),
 				},
 				scopedModels: this.ctx.session.scopedModels,
 				availableToolNames: this.ctx.session.getAdvisorAvailableToolNames(),

@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "bun:test";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
 import { KeybindingsManager, setKeybindings } from "@oh-my-pi/pi-coding-agent/config/keybindings/keybindings";
 import type { HookEditorOptions } from "@oh-my-pi/pi-coding-agent/modes/view-model/overlays/hook-editor";
+import * as prediction from "../src/predict/client";
+import type { TextAssistFeatures } from "../src/ui/composer/text-assist";
 import { HookEditor, type HookEditorHandle } from "../src/ui/overlays/panels/hook-dialogs";
 import { type LayerTerminal, mountLayer } from "./helpers/layer-terminal";
 
@@ -22,6 +24,7 @@ function mountEditor(
 	onSubmit: (value: string, images?: readonly ImageContent[]) => void,
 	onCancel: (draft: string, images?: readonly ImageContent[]) => void,
 	options?: HookEditorOptions,
+	spellingFeatures?: TextAssistFeatures,
 ): Mounted {
 	let handle: HookEditorHandle | undefined;
 	const term = mountLayer(
@@ -30,6 +33,7 @@ function mountEditor(
 				title,
 				prefill,
 				options,
+				spellingFeatures,
 				onSubmit,
 				onCancel,
 				ref: h => {
@@ -49,6 +53,28 @@ function largePasteText(): string {
 }
 
 describe("HookEditor default (hook) mode", () => {
+	it("updates word completion while open and inserts the new suggestion on Right", async () => {
+		vi.spyOn(prediction, "textPredictionBackend").mockReturnValue({
+			complete: async (_before: string, prefix: string) => (prefix === "examp" ? "le" : null),
+			feedback: () => {},
+		});
+		const onSubmit = vi.fn();
+		const editor = mountEditor("Prompt", "An examp", onSubmit, vi.fn(), undefined, { autocomplete: "ngram" });
+
+		editor.text(); // Start the asynchronous request against the stub engine.
+		await new Promise(resolve => setImmediate(resolve));
+		expect(editor.text()).toMatch(/An examp.?le/);
+		editor.handle.setSpellingFeatures({ autocomplete: "off" });
+		expect(editor.text()).not.toMatch(/An examp.?le/);
+		editor.handle.setSpellingFeatures({ autocomplete: "ngram" });
+		editor.text();
+		await new Promise(resolve => setImmediate(resolve));
+		expect(editor.text()).toMatch(/An examp.?le/);
+		editor.press("right", "ctrl+q");
+
+		expect(onSubmit.mock.calls[0]?.[0]).toBe("An example");
+	});
+
 	it("inserts a newline on Enter instead of submitting immediately", () => {
 		const onSubmit = vi.fn();
 		const onCancel = vi.fn();
