@@ -5,6 +5,9 @@
  * words stay while typing.
  */
 
+/** Closing punctuation and hyphens replace word completion's provisional space. */
+export const PROVISIONAL_SPACE_ABSORBERS = /^[-.,;:!?)\]}]/;
+
 /** A word of one logical line, as UTF-16 columns `[start, end)`. */
 export interface TypingWord {
 	line: number;

@@ -65,6 +65,7 @@ import { getEditorCommand, openInEditor } from "../../utils/external-editor";
 import { disambiguateDisplayLabels, sanitizeCarriageReturns } from "../../utils/render-utils";
 import { type BlockedKind, type BlockedStatus, holdBlockedStatus } from "../../utils/run-status";
 import { setExtensionTerminalTitle, setSessionTerminalTitle } from "../../utils/title-generator";
+import { cfgSpellingAutocomplete, cfgSpellingAutocorrect, cfgSpellingTypoDetection } from "../settings";
 import {
 	type AskDialogPrompt,
 	type AskDialogPromptDraft,
@@ -184,6 +185,7 @@ function givenFormAnswers(
 export class ExtensionUiController {
 	#extensionTerminalInputUnsubscribers = new Set<() => void>();
 	#composerShapeDisposers: Array<() => void> = [];
+	#hookEditorHandle?: HookEditorHandle;
 	// The composer's place (and the ask slot above it) is shared by the selector / input /
 	// editor / approval / ask / form dialogs, so only one may be presented at a time; the rest
 	// queue. See `#presentDialog`.
@@ -219,6 +221,19 @@ export class ExtensionUiController {
 	/** Remove extension-owned composer styles from the process registries. */
 	disposeComposerShapes(): void {
 		for (const dispose of this.#composerShapeDisposers.splice(0)) dispose();
+	}
+
+	/** Spelling options for hook and ask answer editors, read from the current settings. */
+	#spellingFeatures() {
+		return {
+			typoDetection: cfgSpellingTypoDetection.get(this.ctx.settings),
+			autocomplete: cfgSpellingAutocomplete.get(this.ctx.settings),
+			autocorrect: cfgSpellingAutocorrect.get(this.ctx.settings),
+		};
+	}
+
+	updateHookEditorSpelling(): void {
+		this.#hookEditorHandle?.setSpellingFeatures(this.#spellingFeatures());
 	}
 
 	/**
@@ -1164,6 +1179,7 @@ export class ExtensionUiController {
 							},
 							title: prompt.title,
 							prefill,
+							spellingFeatures: this.#spellingFeatures(),
 							options: {
 								promptStyle: true,
 								externalEditor: editDialogExternally,
@@ -1560,8 +1576,12 @@ export class ExtensionUiController {
 			this.ctx.hookEditor = this.ctx.showEditorAreaDialog(
 				() =>
 					HookEditor({
+						ref: handle => {
+							this.#hookEditorHandle = handle;
+						},
 						title,
 						prefill,
+						spellingFeatures: this.#spellingFeatures(),
 						options: {
 							...editorOptions,
 							externalEditor: editDialogExternally,
@@ -1583,6 +1603,7 @@ export class ExtensionUiController {
 	hideHookEditor(): void {
 		this.ctx.hookEditor?.close();
 		this.ctx.hookEditor = undefined;
+		this.#hookEditorHandle = undefined;
 	}
 
 	/**

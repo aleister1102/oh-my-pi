@@ -3543,6 +3543,8 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.composer.setAutocompleteMaxVisible(cfgAutocompleteMaxVisible.get(this.settings));
 		if (any("composer.shape")) this.syncComposerShape();
 		if (any("spelling.autocomplete")) this.#wordCompletion.setMethod(cfgSpellingAutocomplete.get(this.settings));
+		if (any("spelling.typoDetection", "spelling.autocomplete", "spelling.autocorrect"))
+			this.#extensionUiController.updateHookEditorSpelling();
 		if (any("tui.vimMode", "tui.vimModeDisplay", "tui.vimShowCommand", "tui.vimStartMode")) {
 			this.#applyVimModeSetting();
 		}

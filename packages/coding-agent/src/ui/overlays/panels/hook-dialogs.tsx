@@ -32,6 +32,8 @@ import {
 	matchesAppInterrupt,
 } from "../../../config/keybindings/matchers";
 import { kbdOf } from "../../keys/hints";
+import { createTextAssist, type TextAssistFeatures } from "../../composer/text-assist";
+import { TextAssistSuggestions } from "../../composer/text-assist-suggestions";
 import { type DialogVim, UndoHistory, VimEditor } from "../../composer/vim-editor";
 import { keyTitle } from "../../styles/panels/common";
 
@@ -231,6 +233,7 @@ export interface HookEditorProps {
 	readonly title: string;
 	readonly prefill?: string;
 	readonly options?: HookEditorOptions;
+	readonly spellingFeatures?: TextAssistFeatures;
 	/** The terminal draws its own caret (no caret glyph in the text). */
 	readonly terminalCursor?: Accessor<boolean>;
 	/** Vim editing in the box (`tui.vimMode`): the start mode and the clipboard registers. */
@@ -242,6 +245,7 @@ export interface HookEditorProps {
 /** Attach images (clipboard pastes) and replace the text from outside. */
 export interface HookEditorHandle {
 	setText(text: string): void;
+	setSpellingFeatures(features: TextAssistFeatures): void;
 	/** Insert `text` at the caret. */
 	paste(text: string): void;
 	/**
@@ -277,11 +281,24 @@ export function HookEditor(props: HookEditorProps & { readonly ref?: (handle: Ho
 		line.set(next);
 		vim?.edited(before);
 	};
+	const applyFieldEdit = (event: TextEdit) => {
+		const current = untrack(line);
+		const next = applyEdit(current, widenOverMarkers(event, current.text, untrack(images).length));
+		if (next) edit(next, event);
+	};
+	const spellingFeatures = signal<TextAssistFeatures>(props.spellingFeatures ?? {});
+	const assist = createTextAssist({
+		value: line,
+		apply: applyFieldEdit,
+		features: spellingFeatures,
+		active: () => !vim || vim.mode() === "insert" || vim.mode() === "replace",
+	});
 	let open = true;
 	onCleanup(() => {
 		open = false;
 	});
 	props.ref?.({
+		setSpellingFeatures: features => spellingFeatures.set(features),
 		setText: text => {
 			const value = replaceTabs(text);
 			edit({ text: value, cursor: value.length });
@@ -344,7 +361,6 @@ export function HookEditor(props: HookEditorProps & { readonly ref?: (handle: Ho
 				title: frameTitle(flatQuestion !== undefined ? `${props.title}: ${flatQuestion}` : head),
 				detail: flatQuestion === undefined ? detail : undefined,
 				prompt,
-				caret: !(props.terminalCursor?.() ?? false),
 			})}
 			onKey={key => {
 				if (matchesAnyKey(key, appFollowUpKeys()) || (prompt && key.id === "enter")) submit();
@@ -384,17 +400,15 @@ export function HookEditor(props: HookEditorProps & { readonly ref?: (handle: Ho
 					key="input"
 					text={() => line().text}
 					cursor={() => line().cursor}
+					ghost={assist.ghost}
+					decor={assist.decor}
 					sendable={false}
 					maxLines={options.maxHeight ?? DEFAULT_MAX_LINES}
 					onPaste={paste => pasteImages(paste.text)}
 					placeholder={() => (line().text === "" ? [{ t: placeholder }] : undefined)}
-					onEdit={event => {
-						const current = untrack(line);
-						const next = applyEdit(current, widenOverMarkers(event, current.text, untrack(images).length));
-						if (next) edit(next, event);
-					}}
+					onEdit={event => assist.edit(event, applyFieldEdit)}
 					// Vim takes its keys first: Escape leaves Insert mode before the dialog cancels on it.
-					onKey={key => vim?.handle(key) ?? false}
+					onKey={key => (vim?.handle(key) ?? false) || assist.handleKey(key)}
 					onUndo={() => {
 						wordEnd = -1;
 						if (vim) vim.undo();
@@ -405,9 +419,14 @@ export function HookEditor(props: HookEditorProps & { readonly ref?: (handle: Ho
 					}}
 					mode={() => vimLabel(vim)}
 					anchor={() => vim?.anchorOffset() ?? undefined}
-					term={() => (vim ? vimTerm(vim) : undefined)}
+					term={() => ({
+						...(!vim ? { caret: "underline", caretGlyph: "▏" } : vimTerm(vim)),
+						...(props.terminalCursor?.() ? { caret: "none", caretEnd: "none" } : {}),
+						placeholder: null,
+					})}
 				/>
 			</col>
+			<TextAssistSuggestions assist={assist} />
 			<row key="actions" role="omp.actions" align="center" gap="sm">
 				{options.externalEditor && (
 					<ActionButton

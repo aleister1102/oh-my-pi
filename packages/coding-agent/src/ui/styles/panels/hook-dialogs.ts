@@ -7,7 +7,6 @@
  * - hook editor: the text in a rounded composer box, or after `> ` in the
  *   prompt style.
  */
-import type { UiNode } from "@oh-my-pi/pi-tui";
 import { type Block, defineRolePainter, EMPTY_BLOCK } from "@oh-my-pi/pi-tui/term/paint";
 import { inputLine } from "@oh-my-pi/pi-tui/term/painters/prefs";
 import { visibleWidth, wrap } from "@oh-my-pi/pi-tui/text/width";
@@ -39,44 +38,19 @@ defineRolePainter("col", "omp.overlay.hook-input", (node, cx): Block => {
 	return { rows: boxRows(theme, title, ["", field, "", ...wrap(hints, inner), ""], cx.width) };
 });
 
-/**
- * The editor's text rows (with a thin caret unless the terminal draws its
- * own), `visible` of them around the caret's row. A line wider than the
- * field wraps without its indentation.
- */
-function editorRows(editor: UiNode | undefined, width: number, caret: boolean, visible: number): string[] {
-	if (!editor) return [""];
-	const props = propsOf<TspEditorProps>(editor);
-	const text = props.text ?? "";
-	const cursor = Math.min(props.cursor ?? text.length, text.length);
-	const marked = `${text.slice(0, cursor)}\u0000${text.slice(cursor)}`;
-	const rows: string[] = [];
-	for (const line of marked.split("\n")) {
-		if (line === "") rows.push("");
-		else if (visibleWidth(line.replace("\u0000", "▏")) <= width) rows.push(line);
-		else rows.push(...wrap(line.trimStart(), width));
-	}
-	const at = Math.max(
-		0,
-		rows.findIndex(row => row.includes("\u0000")),
-	);
-	const start = Math.max(0, Math.min(rows.length - visible, at));
-	return rows.slice(start, start + visible).map(row => row.replace("\u0000", caret ? "▏" : ""));
-}
-
 defineRolePainter("col", "omp.overlay.hook-editor", (node, cx): Block => {
 	const theme = cx.theme;
 	if (cx.width < 8) return EMPTY_BLOCK;
 	const inner = cx.width - 4;
-	const term = termOf<{ title: string; detail?: string; prompt: boolean; caret: boolean }>(node);
+	const term = termOf<{ title: string; detail?: string; prompt: boolean }>(node);
 	const editor = findNode(node, child => child.kind === "editor");
 	// The field's chrome takes two of its rows.
 	const maxLines = Math.max(1, (editor ? (propsOf<TspEditorProps>(editor).maxLines ?? 18) : 18) - 2);
 	const content: string[] = [""];
 	if (term.detail) content.push(...term.detail.split("\n").flatMap(line => wrap(theme.fg("accent", line), inner)), "");
 	if (term.prompt) {
-		const rows = editorRows(editor, inner - 2, term.caret !== false, maxLines);
-		rows.forEach((row, i) => content.push(`${i === 0 ? "> " : "  "}${theme.fgResolved("text", row)}`));
+		const rows = editor ? cx.paint(editor, inner - 2, maxLines).rows : [""];
+		rows.forEach((row, i) => content.push(`${i === 0 ? "> " : "  "}${row}`));
 	} else {
 		const shape = composerShape("box");
 		const paddingX = shape.paddingX;
@@ -93,10 +67,9 @@ defineRolePainter("col", "omp.overlay.hook-editor", (node, cx): Block => {
 		};
 		const top = shape.top?.(chrome);
 		if (top !== undefined) content.push(top);
-		const rows = editorRows(editor, contentWidth, term.caret !== false, maxLines);
-		rows.forEach((plain, i) => {
-			const text = theme.fgResolved("text", plain);
-			const width = visibleWidth(plain);
+		const rows = editor ? cx.paint(editor, contentWidth, maxLines).rows : [""];
+		rows.forEach((text, i) => {
+			const width = visibleWidth(text);
 			content.push(
 				...shape.row({
 					...chrome,
@@ -110,6 +83,10 @@ defineRolePainter("col", "omp.overlay.hook-editor", (node, cx): Block => {
 			);
 		});
 	}
+	const suggestions = findNode(node, child => propsOf<{ role?: string }>(child).role === "omp.spelling.suggestions");
+	const choices = suggestions ? cx.paint(suggestions, inner) : undefined;
+	const choicesRow = content.length + 1;
+	if (choices) content.push(...choices.rows);
 	const cancel = term.prompt ? keyLabel(theme, "escape") : interruptGlyph(theme);
 	const tail = `${cancel} cancel  ${keyLabel(theme, appExternalEditorKeys()[0] ?? "ctrl+g")} external editor`;
 	const followUp = appFollowUpKeys();
@@ -117,5 +94,8 @@ defineRolePainter("col", "omp.overlay.hook-editor", (node, cx): Block => {
 		? `${keyLabel(theme, "enter")} or ${keyLabel(theme, followUp[0]!)} submit  ${tail}`
 		: `${keyLabels(theme, followUp)} submit  ${tail}`;
 	content.push("", ...wrap(theme.fg("dim", hint), inner), "");
-	return { rows: boxRows(theme, term.title ?? "", content, cx.width) };
+	return {
+		rows: boxRows(theme, term.title ?? "", content, cx.width),
+		hits: choices?.hits?.map(hit => ({ ...hit, row: hit.row + choicesRow, col: hit.col + 2 })),
+	};
 });
