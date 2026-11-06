@@ -6,12 +6,13 @@
 
 - Enabled macOS spelling assistance (typo undercurls, Tab completions, on-space autocorrect) in the hook and ask answer editor (`HookEditorComponent`), following the `spelling.*` settings ([#12517](https://github.com/can1357/oh-my-pi/pull/12517) by [@aleister1102](https://github.com/aleister1102))
 - Skill prompt cards show a chip and line count for every skill loaded by a multi-skill prompt (`/skill:foo /skill:bar`); single-skill cards look as before ([#12535](https://github.com/can1357/oh-my-pi/pull/12535) by [@aleister1102](https://github.com/aleister1102))
+
 ### Fixed
 
 - Fixed LaTeX styles being lost inside nested wrappers: `\textnormal` resets bold and italic, radical indexes such as `\sqrt[n]{…}` keep the caller's style and color, optional arguments like `\xrightarrow[n]{…}` keep the active color, and `\color` no longer leaks past `\end{…}`; sized headings no longer show the ANSI codes of inline math ([#18275](https://github.com/can1357/oh-my-pi/pull/18275) by [@aleister1102](https://github.com/aleister1102))
-### Fixed
-
 - Fixed Tern sessions looking frozen while the terminal is slow to acknowledge frames (typically with many subagents streaming): typed keys were handled but their echo waited behind credit-held output for up to 5 seconds, and once a stall was detected the screen updated only once every 5 seconds. A key or pointer event now sends its frame past the credits (spaced at most 200 ms apart), and a stalled surface keeps receiving coalesced frames at most every 200 ms until the terminal acknowledges one again ([#18280](https://github.com/can1357/oh-my-pi/pull/18280) by [@aleister1102](https://github.com/aleister1102))
+- Fixed the Git TUI's word wrap splitting words across rows: wrapped rows now break at whitespace and at vim's break characters, and a word is split only when it is wider than a row ([#12472](https://github.com/can1357/oh-my-pi/pull/12472) by [@aleister1102](https://github.com/aleister1102)).
+- Disabled macOS spelling assistance for command execution with `!` and Python execution with `$` ([#12474](https://github.com/can1357/oh-my-pi/pull/12474) by [@aleister1102](https://github.com/aleister1102)).
 
 ## [18.17.0] - 2026-11-06
 
@@ -100,14 +101,6 @@
 - With two or more `Editor.predictions`, the ghost text follows the first one the draft is a prefix of; a typed draft that equals a shorter one keeps the ghost of a longer one. Once the buffer equals one of them with no ghost (always right after Tab, Right, or the list inserts one), a dim `⇥ N more` hint appears; press Tab to list them all, then Enter, Tab or Right to swap the whole line (never submitting) or Esc to keep it ([#17796](https://github.com/can1357/oh-my-pi/pull/17796) by [@wolfiesch](https://github.com/wolfiesch))
 - F2 now opens the rename dialog in the resume picker in Ghostty, kitty and other terminals using the kitty keyboard protocol; F1 and F4 shortcuts work there too ([#17812](https://github.com/can1357/oh-my-pi/issues/17812)).
 - Added `Component.nativeTrailers()`, which lets a transcript block add native blocks of its own directly after it. Trailing blocks stay visible while the block is collapsed.
-
-### Fixed
-
-- Fixed the Git TUI's word wrap splitting words across rows: wrapped rows now break at whitespace and at vim's break characters, and a word is split only when it is wider than a row ([#12472](https://github.com/can1357/oh-my-pi/pull/12472) by [@aleister1102](https://github.com/aleister1102)).
-
-### Fixed
-
-- Disabled macOS spelling assistance for command execution with `!` and Python execution with `$` ([#12474](https://github.com/can1357/oh-my-pi/pull/12474) by [@aleister1102](https://github.com/aleister1102)).
 
 ## [18.15.0] - 2026-11-01
 
