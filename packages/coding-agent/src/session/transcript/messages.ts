@@ -68,6 +68,12 @@ export interface BackgroundTanDispatchDetails {
 	sessionFile: string;
 }
 
+export interface SkillPromptSkill {
+	name: string;
+	path: string;
+	lineCount: number;
+}
+
 export interface SkillPromptDetails {
 	name: string;
 	path: string;
@@ -77,6 +83,10 @@ export interface SkillPromptDetails {
 	 *  a plain user bubble. Absent on sessions recorded before chips existed. */
 	prompt?: string;
 	lineCount: number;
+	/** Every skill this prompt loaded, in draft order. Absent on sessions
+	 *  recorded before multi-skill prompts; consumers fall back to
+	 *  `name`/`path`/`lineCount`. */
+	skills?: SkillPromptSkill[];
 	/** Internal: compact label shown for a queued custom message. Optional —
 	 *  non-streaming skill prompts never set it. Stripped from persisted
 	 *  `details` by `SessionManager.appendCustomMessageEntry` via the

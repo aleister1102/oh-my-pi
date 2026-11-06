@@ -19,10 +19,7 @@ import { fileLink } from "../tools/file-common";
 import { bubbleMarkdown } from "./user";
 
 interface SkillTerm {
-	label: string;
-	/** The skill's SKILL.md: the pill links to it. */
-	path?: string;
-	lines?: string;
+	header: readonly { label: string; path?: string; lines?: string }[];
 	leading: boolean;
 	draft: string;
 	chips: readonly TermChip[];
@@ -38,13 +35,17 @@ function paintSkill(node: UiNode, cx: PaintContext): Block {
 	const width = cx.width;
 	const boxWidth = Math.max(1, width - 1);
 	const inner = Math.max(1, boxWidth - 2);
-	const pill = fileLink(
-		cx,
-		theme.bg("customMessageBg", theme.fg("customMessageLabel", `\x1b[1m${term.label ?? ""}\x1b[22m`)),
-		term.path,
-		1,
-	);
-	const header = term.lines ? `${pill}  ${theme.fg("muted", term.lines)}` : pill;
+	const header = (term.header ?? [])
+		.map(({ label, path, lines }) => {
+			const pill = fileLink(
+				cx,
+				theme.bg("customMessageBg", theme.fg("customMessageLabel", `\x1b[1m${label}\x1b[22m`)),
+				path,
+				1,
+			);
+			return lines ? `${pill}  ${theme.fg("muted", lines)}` : pill;
+		})
+		.join("  ");
 	const content: string[] = [...wrap(header, inner)];
 	if (term.leading && term.draft)
 		content.push("", ...bubbleMarkdown(theme, term.draft, inner, { chips: term.chips, hyperlinks: cx.hyperlinks }));

@@ -14,6 +14,7 @@
  */
 import type { JSXNode, Reactive } from "@oh-my-pi/pi-tui";
 import type { TspSpan } from "@oh-my-pi/pi-wire";
+import { allowsSkillTokens, SKILL_TOKEN_RE } from "../../../extensibility/skill-tokens";
 import type { SkillPromptDetails } from "../../../session/transcript/messages";
 import { cardExpansion } from "../expansion";
 import { chipText, skillChipLabel, termChips } from "./chips";
@@ -37,27 +38,61 @@ function promptText(content: SkillMessageProps["content"]): string {
 /** A skill invocation. */
 export function SkillMessage(props: SkillMessageProps): JSXNode {
 	const details = props.details;
-	const name = details?.name?.trim() || "unknown";
-	const token = `/skill:${name}`;
+	const loaded = details?.skills?.length
+		? details.skills
+		: [{ name: details?.name?.trim() || "unknown", path: details?.path, lineCount: details?.lineCount }];
+	const byName = new Map(loaded.map(skill => [skill.name, skill]));
+	const token = `/skill:${loaded[0]!.name}`;
 	const prompt = details?.prompt ?? (details?.args ? `${token} ${details.args}` : token);
-	const label = skillChipLabel(name);
-	// Only the invoked skill becomes a chip: another `/skill:` token the dispatcher ignored stays literal.
-	const display = prompt.replace(new RegExp(`${RegExp.escape(token)}(?![\\w./-])`, "g"), label);
-	const leading = display.startsWith(label) && /^\s*$/.test(display.charAt(label.length));
-	const draft = leading ? display.slice(label.length).trim() : display;
-	const href = details?.path ? openableImage(details.path).href : undefined;
-	const head: TspSpan[] = [
-		href ? { t: label, s: "customMessageLabel strong", href } : { t: label, s: "customMessageLabel strong" },
-	];
-	const lines =
-		typeof details?.lineCount === "number"
-			? `${details.lineCount} ${details.lineCount === 1 ? "line" : "lines"}`
-			: undefined;
-	if (lines) head.push({ t: `  ${lines}`, s: "muted" });
+	const canChip = allowsSkillTokens(prompt);
+	const leadingSkills = new Set<string>();
+	let draftStart = 0;
+	if (canChip) {
+		for (const match of prompt.matchAll(SKILL_TOKEN_RE)) {
+			const name = match[2]!;
+			const tokenStart = match.index + match[1]!.length;
+			const between = prompt.slice(draftStart, tokenStart);
+			if (
+				(draftStart === 0 ? between !== "" : between.trim() !== "") ||
+				!byName.has(name) ||
+				leadingSkills.has(name)
+			) {
+				break;
+			}
+			leadingSkills.add(name);
+			draftStart = match.index + match[0].length;
+		}
+	}
+	const leading = leadingSkills.size > 0;
+	const remaining = leading ? prompt.slice(draftStart).trim() : prompt;
+	// Only loaded skills become chips; other tokens stay literal.
+	const draft = canChip
+		? remaining.replace(SKILL_TOKEN_RE, (match, delimiter: string, name: string) =>
+				byName.has(name) ? `${delimiter}${skillChipLabel(name)}` : match,
+			)
+		: remaining;
+	const headerSkills = leading ? [...leadingSkills].map(name => byName.get(name)!) : loaded;
+	const header = headerSkills.map(skill => ({
+		label: skillChipLabel(skill.name),
+		path: skill.path,
+		lines:
+			typeof skill.lineCount === "number"
+				? `${skill.lineCount} ${skill.lineCount === 1 ? "line" : "lines"}`
+				: undefined,
+	}));
+	const head: TspSpan[] = [];
+	for (const { label, path, lines } of header) {
+		const href = path ? openableImage(path).href : undefined;
+		if (head.length > 0) head.push({ t: "  " });
+		head.push(
+			href ? { t: label, s: "customMessageLabel strong", href } : { t: label, s: "customMessageLabel strong" },
+		);
+		if (lines) head.push({ t: `  ${lines}`, s: "muted" });
+	}
 	const text = promptText(props.content);
 	const chips = chipText(draft, {
 		imageLinks: props.imageLinks,
-		skillPath: candidate => (candidate === name ? details?.path : undefined),
+		skillPath: candidate => byName.get(candidate)?.path,
 	});
 	const { expanded, toggle } = cardExpansion(props.expanded, props.onToggle);
 	return (
@@ -66,9 +101,7 @@ export function SkillMessage(props: SkillMessageProps): JSXNode {
 			tone="user"
 			head={head}
 			term={() => ({
-				label,
-				...(details?.path ? { path: details.path } : {}),
-				lines,
+				header,
 				leading,
 				draft: chips.text,
 				chips: termChips(chips.chips),
