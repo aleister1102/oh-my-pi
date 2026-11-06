@@ -163,6 +163,10 @@ export interface AgentViewSessionManager extends AgentSessionManagerHandle {
 	getSessionName(): string | undefined;
 	/** Every entry of the session file. */
 	getEntries(): SessionEntry[];
+	/** Number of entries in the session file. */
+	getEntryCount(): number;
+	/** Entries of the session file, optionally only those of `type`, decoding one at a time. */
+	iterateEntries(type?: SessionEntry["type"]): IterableIterator<SessionEntry>;
 	/** Entries from the root to `fromId` (default: the current leaf). */
 	getBranch(fromId?: string): SessionEntry[];
 	/** Id of the current leaf entry. */
