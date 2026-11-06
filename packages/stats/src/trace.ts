@@ -212,7 +212,6 @@ interface TranscriptCacheEntry {
 	bytes: number;
 }
 
-const TRANSCRIPT_CHECKPOINT_BYTES = 256;
 const TRANSCRIPT_CACHE_MAX_FILES = 1024;
 const TRANSCRIPT_CACHE_MAX_RAW_BYTES = 128 * 1024 * 1024;
 const TRANSCRIPT_CACHE_MAX_ENTRIES = 500_000;
@@ -284,17 +283,13 @@ function storeTranscriptCache(file: string, entry: TranscriptCacheEntry): Transc
 	return entry;
 }
 
-/** Hash the parsed prefix's tail; a rewrite changes it even when size/mtime do not. */
-async function readTranscriptCheckpoint(resolved: string, end: number): Promise<string> {
-	const start = Math.max(0, end - TRANSCRIPT_CHECKPOINT_BYTES);
-	if (end <= start) return Bun.hash(new Uint8Array()).toString(16);
-	return Bun.hash(await Bun.file(resolved).slice(start, end).bytes()).toString(16);
-}
-
-/** Checkpoint from bytes already in memory (full-load path). */
+/**
+ * Hash the whole parsed prefix. An in-place rewrite of an earlier line can keep
+ * the size, mtime and tail unchanged, so only a full-prefix hash proves the
+ * prefix still matches what was parsed.
+ */
 function checkpointFromBytes(bytes: Uint8Array, end: number): string {
-	const start = Math.max(0, end - TRANSCRIPT_CHECKPOINT_BYTES);
-	return Bun.hash(bytes.subarray(start, end)).toString(16);
+	return Bun.hash(bytes.subarray(0, end)).toString(16);
 }
 
 function sameTranscriptIdentity(state: TranscriptFileState, info: Stats): boolean {
@@ -334,24 +329,25 @@ async function loadTranscriptEntriesUncached(resolved: string): Promise<Transcri
 	}
 	if (cached && !compressed && sameTranscriptIdentity(cached.state, info)) {
 		if (info.size > cached.state.size && cached.state.mtimeMs <= info.mtimeMs) {
-			const checkpoint = await readTranscriptCheckpoint(resolved, cached.state.offset);
-			if (checkpoint === cached.state.checkpoint) {
-				const tail = await Bun.file(resolved).slice(cached.state.offset, info.size).bytes();
-				const parsed = parseSessionEntriesTail(tail);
+			// One read serves both the prefix check and the tail parse.
+			const fileBytes = await Bun.file(resolved).slice(0, info.size).bytes();
+			const prefixEnd = cached.state.offset;
+			if (fileBytes.length >= prefixEnd && checkpointFromBytes(fileBytes, prefixEnd) === cached.state.checkpoint) {
+				const parsed = parseSessionEntriesTail(fileBytes.subarray(prefixEnd));
 				const previousBytes = cached.bytes;
 				const previousCount = cached.entries.length;
 				for (const entry of parsed.entries) {
 					cached.entries.push(entry);
 					indexSessionEntry(cached.index, entry);
 				}
-				const offset = cached.state.offset + parsed.read;
+				const offset = prefixEnd + parsed.read;
 				cached.state = {
 					...cached.state,
 					size: info.size,
 					mtimeMs: info.mtimeMs,
 					ctimeMs: info.ctimeMs,
 					offset,
-					checkpoint: await readTranscriptCheckpoint(resolved, offset),
+					checkpoint: checkpointFromBytes(fileBytes, offset),
 				};
 				cached.bytes = info.size;
 				transcriptCacheBytes += cached.bytes - previousBytes;
@@ -1054,7 +1050,15 @@ export function truncateTraceTracks(
 		}
 		remaining = Math.max(0, remaining - track.spans.length);
 	}
-	return omittedTracks > 0 || omittedSpans > 0 ? { tracks: omittedTracks, spans: omittedSpans } : undefined;
+	if (omittedTracks === 0 && omittedSpans === 0) return undefined;
+	// Drop links to omitted or emptied tracks so no span offers navigation it cannot perform.
+	const navigable = new Set(tracks.filter(track => track.spans.length > 0).map(track => track.id));
+	for (const track of tracks) {
+		for (const span of track.spans) {
+			if (span.childTrackId !== undefined && !navigable.has(span.childTrackId)) delete span.childTrackId;
+		}
+	}
+	return { tracks: omittedTracks, spans: omittedSpans };
 }
 
 /**

@@ -396,6 +396,9 @@ export function formatStatsDashboardUrl(hostname: string, port: number): string 
 function acceptsEncoding(header: string | null, encoding: string): boolean {
 	if (!header) return false;
 	const wanted = encoding.toLowerCase();
+	// The named coding outranks `*`; `*` applies only when the coding is not listed.
+	let explicit: number | undefined;
+	let wildcard: number | undefined;
 	for (const part of header.split(",")) {
 		const [rawName, ...params] = part.trim().split(";");
 		const name = rawName?.trim().toLowerCase();
@@ -407,9 +410,10 @@ function acceptsEncoding(header: string | null, encoding: string): boolean {
 			const parsed = Number.parseFloat(rawValue ?? "");
 			if (Number.isFinite(parsed)) q = parsed;
 		}
-		if (q > 0) return true;
+		if (name === wanted) explicit = q;
+		else wildcard = q;
 	}
-	return false;
+	return (explicit ?? wildcard ?? 0) > 0;
 }
 
 /** Trace/entry payloads are the multi-MB responses; compress them when the client allows it. */

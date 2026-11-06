@@ -79,4 +79,30 @@ describe("trace response compression", () => {
 			server.stop();
 		}
 	});
+
+	it("honors an explicit gzip;q=0 over a wildcard", async () => {
+		const file = await writeRoot();
+		const server = await startServer(0, "127.0.0.1");
+		try {
+			const endpoint = `http://127.0.0.1:${server.port}/api/session/trace?file=${encodeURIComponent(file)}`;
+			const response = await fetch(endpoint, { headers: { "Accept-Encoding": "gzip;q=0, *;q=1" } });
+			expect(response.status).toBe(200);
+			expect(response.headers.get("content-encoding")).toBeNull();
+			expect(((await response.json()) as { file: string }).file).toBe(file);
+		} finally {
+			server.stop();
+		}
+	});
+
+	it("still gzips when only a wildcard permits it", async () => {
+		const file = await writeRoot();
+		const server = await startServer(0, "127.0.0.1");
+		try {
+			const endpoint = `http://127.0.0.1:${server.port}/api/session/trace?file=${encodeURIComponent(file)}`;
+			const response = await fetch(endpoint, { headers: { "Accept-Encoding": "*;q=1" } });
+			expect(response.headers.get("content-encoding")).toBe("gzip");
+		} finally {
+			server.stop();
+		}
+	});
 });

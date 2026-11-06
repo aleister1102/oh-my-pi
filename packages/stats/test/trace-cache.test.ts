@@ -119,6 +119,31 @@ describe("transcript cache", () => {
 		expect(labels).toContain("third");
 	});
 
+	it("detects an in-place prefix edit that keeps size and the tail unchanged", async () => {
+		const filler = Array.from({ length: 28 }, (_, i) =>
+			user(`f${i}`, i === 0 ? "u1" : `f${i - 1}`, `filler-line-${i}`, T + 2000 + i * 1000),
+		);
+		const file = await writeRoot("1700000000000_inplace.jsonl", [
+			header(),
+			user("u1", null, "original", T + 1000),
+			...filler,
+		]);
+		expect(await getTraceEntry(file, "u1")).toMatchObject({ message: { content: [{ text: "original" }] } });
+
+		await Bun.sleep(10);
+		const handle = await fs.open(file, "r+");
+		try {
+			// Same-length edit to the first line. The 256 trailing bytes the old
+			// checkpoint hashed are untouched, and one entry is appended.
+			const edited = (await Bun.file(file).text()).replace('"original"', '"replaced"');
+			await handle.writeFile(`${edited}${JSON.stringify(user("u2", "f27", "appended", T + 40_000))}\n`);
+		} finally {
+			await handle.close();
+		}
+		expect(await getTraceEntry(file, "u1")).toMatchObject({ message: { content: [{ text: "replaced" }] } });
+		expect(await getTraceEntry(file, "u2")).toMatchObject({ id: "u2" });
+	});
+
 	it("reuses a cached trace when switching back to an unchanged session", async () => {
 		const first = await writeRoot("1700000000000_lru-a.jsonl", [
 			header(),
@@ -213,5 +238,24 @@ describe("trace payload cap", () => {
 	it("returns undefined when the payload is within budget", () => {
 		const tracks = [syntheticTrack("main", 2), syntheticTrack("a", 2)];
 		expect(truncateTraceTracks(tracks, 2, 4)).toBeUndefined();
+	});
+
+	it("drops child links whose target track was omitted by the track cap", () => {
+		const main = syntheticTrack("main", 2);
+		main.spans[0].childTrackId = "a";
+		main.spans[1].childTrackId = "b";
+		const tracks = [main, syntheticTrack("a", 1), syntheticTrack("b", 1)];
+		expect(truncateTraceTracks(tracks, 2, 100)).toEqual({ tracks: 1, spans: 1 });
+		expect(tracks[0].spans[0].childTrackId).toBe("a");
+		expect(tracks[0].spans[1].childTrackId).toBeUndefined();
+	});
+
+	it("drops child links whose target track lost every span to the span cap", () => {
+		const main = syntheticTrack("main", 2);
+		main.spans[0].childTrackId = "a";
+		const tracks = [main, syntheticTrack("a", 4)];
+		expect(truncateTraceTracks(tracks, 1024, 2)).toEqual({ tracks: 0, spans: 4 });
+		expect(tracks[1].spans).toHaveLength(0);
+		expect(tracks[0].spans[0].childTrackId).toBeUndefined();
 	});
 });
