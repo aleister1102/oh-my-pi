@@ -6,7 +6,7 @@
 
 - The ask dialog's "Other" answer box and hook editors now get macOS spelling assistance (typo undercurls, Tab completions, on-space autocorrect), following the `spelling.*` settings when opened; open hook editors also update live when those settings change ([#12517](https://github.com/can1357/oh-my-pi/pull/12517) by [@aleister1102](https://github.com/aleister1102))
 - Supported invoking multiple skills in a single prompt submission (`/skill:foo /skill:bar`); every registered `/skill:<name>` token in the prompt is loaded, and unknown tokens stay in the prompt text ([#12535](https://github.com/can1357/oh-my-pi/pull/12535) by [@aleister1102](https://github.com/aleister1102))
-- Eval `browser` calls run the extension `tool_call` handlers that opt in with `pi.on("tool_call", handler, { evalPreludes: true })`, so an extension that blocks or rewrites `browser` calls (for example to point `app.cdp_url` at a per-agent endpoint) also covers calls made from eval. Handlers that do not opt in never see eval prelude calls, and calls a `browser` approval policy already denies skip the handlers. Other eval preludes are unchanged, and prelude calls get no matching `tool_result` ([#18277](https://github.com/can1357/oh-my-pi/pull/18277) by [@aleister1102](https://github.com/aleister1102))
+- Eval `browser` calls run the extension `tool_call` and `tool_result` handlers that opt in with `{ evalPreludes: true }`, so an extension that blocks or rewrites `browser` calls (for example to point `app.cdp_url` at a per-agent endpoint) also covers calls made from eval and can release what it set up when the call ends; the `tool_result` is observe-only ([#18277](https://github.com/can1357/oh-my-pi/pull/18277) by [@aleister1102](https://github.com/aleister1102))
 
 ### Changed
 
