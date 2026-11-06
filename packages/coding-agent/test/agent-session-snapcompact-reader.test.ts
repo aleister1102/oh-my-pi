@@ -454,7 +454,7 @@ describe("snapcompact archive read by another model", () => {
 		}
 		expect(archiveScans).toHaveBeenCalledTimes(firstScans);
 
-		// A summary no archive backs is looked up once per branch, not once per request.
+		// A summary no archive backs is looked up once per branch, not once per request or append.
 		const plain = SessionManager.inMemory();
 		const keptId = plain.appendMessage({ role: "user", content: "Kept turn.", timestamp: Date.now() });
 		plain.appendCompaction(EXTENSION_SUMMARY, "Earlier work.", keptId, 100);
@@ -463,6 +463,7 @@ describe("snapcompact archive read by another model", () => {
 		for (let call = 0; call < 3; call++) {
 			const sent = requestContent(await plainSession.convertMessagesToLlm(plainSession.messages, undefined, claude));
 			expect(sent.text).toContain(EXTENSION_FACT);
+			plain.appendMessage({ role: "user", content: `Turn ${call}.`, timestamp: Date.now() });
 		}
 		expect(branchLookups).toHaveBeenCalledTimes(1);
 	});
