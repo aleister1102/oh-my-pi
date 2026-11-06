@@ -247,6 +247,8 @@ function makeSession(
 			getCwd: () => process.cwd(),
 			getEntries: () => messages,
 			getConversationTip: () => undefined,
+			getEntryCount: () => messages.length,
+			iterateEntries: () => [],
 		},
 	};
 
