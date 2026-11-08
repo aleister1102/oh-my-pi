@@ -696,6 +696,37 @@ describe("async speculative compaction", () => {
 		expect(JSON.stringify(summarized)).toContain("conversation conversation");
 	});
 
+	it("commits a shrinking armed summary against history behind an unreadable remote compaction", async () => {
+		sessionManager.appendCompaction("remote placeholder", undefined, "", THRESHOLD, {
+			method: "remote",
+			preserveData: {
+				openaiRemoteCompaction: {
+					provider: "openai",
+					replacementHistory: [{ role: "user", content: [{ type: "input_text", text: "opaque" }] }],
+				},
+			},
+		});
+		sessionManager.appendMessage(userMessage("later request ".repeat(100)));
+		sessionManager.appendMessage(assistantMessage("later response ".repeat(100), model));
+		sessionManager.appendMessage(userMessage("retained request"));
+		agent.replaceMessages(sessionManager.buildSessionContext({ model }).messages);
+		const compactSpy = vi.spyOn(compactionModule, "compact").mockImplementation(async preparation => ({
+			// Smaller than the restored conversation, but larger than its post-remote tail.
+			summary: "shrinking local summary ".repeat(1_000),
+			firstKeptEntryId: preparation.firstKeptEntryId,
+			tokensBefore: preparation.tokensBefore,
+			details: {},
+		}));
+		maintenance.maybeStartSpeculativeCompaction(SPECULATION_BAND_START, CONTEXT_WINDOW);
+		await waitForState("armed");
+
+		await maintenance.runAutoCompaction("threshold", false, { triggerContextTokens: THRESHOLD });
+
+		expect(compactSpy).toHaveBeenCalledTimes(1);
+		const entry = sessionManager.getEntries().findLast(item => item.type === "compaction");
+		expect(entry?.type === "compaction" ? entry.summary : undefined).toBe("shrinking local summary ".repeat(1_000));
+	});
+
 	it("suppresses speculation at a dead-end cut point and re-arms when the cut point advances", async () => {
 		sessionManager = SessionManager.inMemory();
 		sessionManager.appendMessage(userMessage("earlier request ".repeat(400)));
