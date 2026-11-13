@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- Enabled macOS spelling assistance (typo undercurls, Tab completions, on-space autocorrect) in the hook and ask answer editor (`HookEditorComponent`), following the `spelling.*` settings ([#12517](https://github.com/can1357/oh-my-pi/pull/12517) by [@aleister1102](https://github.com/aleister1102))
+- Skill prompt cards show a chip and line count for every skill loaded by a multi-skill prompt (`/skill:foo /skill:bar`); single-skill cards look as before ([#12535](https://github.com/can1357/oh-my-pi/pull/12535) by [@aleister1102](https://github.com/aleister1102))
+
+### Fixed
+
+- Fixed the Git TUI's word wrap splitting words across rows: wrapped rows now break at whitespace and at vim's break characters, and a word is split only when it is wider than a row ([#12472](https://github.com/can1357/oh-my-pi/pull/12472) by [@aleister1102](https://github.com/aleister1102)).
+- Disabled macOS spelling assistance for command execution with `!` and Python execution with `$` ([#12474](https://github.com/can1357/oh-my-pi/pull/12474) by [@aleister1102](https://github.com/aleister1102)).
+
 ## [18.20.0] - 2026-11-12
 
 ### Added
@@ -2578,14 +2588,4 @@
 
 - Fixed TUI renders repeatedly clearing terminal scrollback after content filled the viewport. Unknown viewport probes no longer let foreground-streaming offscreen growth take the destructive `historyRebuild` path on every frame; newly appended tail rows stay reachable while stale history waits for a safe checkpoint. ([#2154](https://github.com/can1357/oh-my-pi/issues/2154))
 
-## [15.10.6] - 2026-06-08
-
-### Added
-
-- Added `TUI.getFocused()` accessor and `Input.pasteText(text)` method so callers consuming non-bracketed paste transports (e.g. kitty's OSC 5522 enhanced clipboard) can route a paste payload to the currently focused modal Input rather than always to the primary editor. Mirrors the existing `Editor.pasteText` semantics: newlines stripped, tabs normalized, NFC normalization applied. ([#2127](https://github.com/can1357/oh-my-pi/issues/2127))
-
-### Fixed
-
-- Fixed tmux/screen/zellij rewind/branch (`requestRender(true, { clearScrollback: true })`) permanently anchoring the input box to the pane top and overlaying scrollback after a streamed reply had grown past the viewport. `#emitFullPaint` only reset `#scrollbackHighWater` inside the `clearScrollback` branch and otherwise raised it monotonically, so inside multiplexers (where `\x1b[3J` is a no-op and `clearScrollback` is forced off) the streaming peak survived the rewind; on the next frame `#planLiveRegionPinnedRender` saw the stale high-water and anchored `renderViewportTop` past the actual content, repainting every visible row blank and parking the cursor at screen row 0 for the rest of the session. A full repaint with `clearViewport: true` re-emits the entire transcript from row 0, so `#scrollbackHighWater` is now assigned (not max-clamped) to the natural push count regardless of whether ED 3 was issued ([#2130](https://github.com/can1357/oh-my-pi/issues/2130)).
-
-Older entries are archived in [packages/tui/CHANGELOG.md@7049d1b1afeb](https://github.com/can1357/oh-my-pi/blob/7049d1b1afeb8e421e7f9fba5c1dcebd7c382232/packages/tui/CHANGELOG.md).
+Older entries are archived in [packages/tui/CHANGELOG.md@c8fe41d6b157](https://github.com/can1357/oh-my-pi/blob/c8fe41d6b15724611a6bc7ec693e788a3f0c6c95/packages/tui/CHANGELOG.md).

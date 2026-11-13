@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+### Added
+
+- `web_search` now accepts an optional `model` selector for per-query search backend selection; omitting it keeps the configured `web` role chain ([#11926](https://github.com/can1357/oh-my-pi/pull/11926) by [@cyriusweng](https://github.com/cyriusweng))
+- The ask dialog's "Other" answer box, hook editors, and the advisor instructions editor now get macOS spelling assistance (typo undercurls, Tab completions, on-space autocorrect) under the same `spelling.*` settings as the prompt editor, read when they open; open hook editors also update live when those settings change ([#12517](https://github.com/can1357/oh-my-pi/pull/12517) by [@aleister1102](https://github.com/aleister1102))
+- Supported invoking multiple skills in a single prompt submission (`/skill:foo /skill:bar`); every registered `/skill:<name>` token in the prompt is loaded, and unknown tokens stay in the prompt text ([#12535](https://github.com/can1357/oh-my-pi/pull/12535) by [@aleister1102](https://github.com/aleister1102))
+
+### Changed
+
+- Extensions that block or revise `browser` calls now see the same calls when eval makes them, and a `tool_result` follows each one so a handler can release what it set up
+- Resuming a long session reads only the entry types it needs for transcript replay, the compaction notice, Hindsight message extraction and vibe session recovery, instead of decoding the whole journal
+- Replaying a compacted session avoids loading the full earlier history to find its archive, keeping memory use lower in long conversations.
+- `omp` starts faster: the browser's accessibility audit now loads its `axe-core` engine on demand, so a launch no longer pays for it ([#16775](https://github.com/can1357/oh-my-pi/pull/16775) by [@yuzu-octopus](https://github.com/yuzu-octopus))
+- Per-turn tool-output pruning now walks only the entries kept by the latest compaction (plus the earlier calls kept results refer to) instead of the whole branch ([#16517](https://github.com/can1357/oh-my-pi/pull/16517) by [@Komzpa](https://github.com/Komzpa))
+
+### Fixed
+
+- Fixed a resumed long session holding its whole pre-compaction history in memory: the system-prompt digest lookup pinned the fully loaded branch, so every compacted-away message, reasoning block and tool output stayed resident; it now reads only the newest digest record (about 50 MB less live heap on a 35 MB transcript compacted 18 times)
+- Fixed long-session resume retaining discarded history in memory: opening a compacted session now indexes the journal and reads only the active context, while history, tree navigation, exports, and persisted edits still work. Public session records remain directly cloneable; producers announce historical edits with `updateEntry()` before persistence ([#16517](https://github.com/can1357/oh-my-pi/pull/16517) by [@Komzpa](https://github.com/Komzpa))
+
 ## [18.20.0] - 2026-11-12
 
 ### Breaking Changes
