@@ -12,6 +12,10 @@
 
 - Fixed Spotlight baseline and adjusted-net calculations to use consistent result sets, improving headline and step-row accuracy.
 
+### Changed
+
+- Heavy trace sessions reuse parsed transcripts and parse only appended tails, keep an LRU of recent traces, and look up span-drawer entries by index instead of rescanning the transcript. ([#18279](https://github.com/can1357/oh-my-pi/pull/18279) by [@aleister1102](https://github.com/aleister1102))
+- Gzip-encodes `/api/session/trace` and `/api/session/entry` responses when the client sends `Accept-Encoding: gzip`; `q=0` now excludes gzip even when `*` would allow it. ([#18279](https://github.com/can1357/oh-my-pi/pull/18279) by [@aleister1102](https://github.com/aleister1102))
 ## [19.0.1] - 2026-11-19
 
 ### Added
