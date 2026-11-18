@@ -1474,6 +1474,8 @@ export class TurnRecovery {
 		}
 
 		if (!branchEntry) return;
+		const branch = this.#host.sessionManager.getBranch();
+		const branchIndex = branch.findIndex(entry => entry.id === branchEntry.id);
 		this.#cutBranchBefore(branch, prunePrompt ? branchIndex - 1 : branchIndex);
 		this.#host.sessionManager.appendCustomEntry("accepted-terminal-empty-stop");
 	}
@@ -1528,7 +1530,11 @@ export class TurnRecovery {
 		if (!branchEntry) {
 			return undefined;
 		}
-		this.#cutBranchBefore(branch, branch.indexOf(branchEntry));
+		const branch = this.#host.sessionManager.getBranch();
+		this.#cutBranchBefore(
+			branch,
+			branch.findIndex(entry => entry.id === branchEntry.id),
+		);
 		return branchEntry.id;
 	}
 
