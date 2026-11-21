@@ -8,6 +8,7 @@
 import { computed, effect, type JSXNode, signal, untrack } from "@oh-my-pi/pi-tui";
 import { flattenLine } from "@oh-my-pi/pi-tui/text/sanitize";
 import type { TspSpan } from "@oh-my-pi/pi-wire";
+import type { WordCompletionMethod } from "../../../modes/view-model/prompt/word-completion";
 import type { ChoiceField, FormBlock, FormField, FormSpan } from "../../../tools/html-form/parse";
 import { spansText } from "../../../tools/html-form/parse";
 import { keyLabel } from "../../setup/scenes/choice";
@@ -35,6 +36,8 @@ export interface HtmlFormProps {
 	readonly now?: () => number;
 	/** Idle time (ms) after which the draft is sent as it is. */
 	readonly timeout?: number;
+	/** Prose assistance; passwords, emails, URLs and numbers are excluded. */
+	readonly autocomplete?: WordCompletionMethod;
 }
 
 /** Rows a picture takes on a tall terminal. */
@@ -166,6 +169,7 @@ function OpenField(props: {
 					maxLines={4}
 					text={answer.text.text}
 					cursor={answer.text.cursor}
+					ghost={model.ghost({ kind: "text", field: index })}
 					onEdit={edit => model.edit({ kind: "text", field: index }, edit)}
 					placeholder={answer.text.text === "" && field.placeholder ? field.placeholder : undefined}
 					{...vimProps(model, { kind: "text", field: index }, answer.text.cursor)}
@@ -179,6 +183,7 @@ function OpenField(props: {
 				sendable={false}
 				text={secret ? mask(answer.text.text) : answer.text.text}
 				cursor={secret ? 0 : answer.text.cursor}
+				ghost={model.ghost({ kind: "text", field: index })}
 				onEdit={edit => model.edit({ kind: "text", field: index }, edit)}
 				placeholder={field.placeholder || undefined}
 				{...vimProps(model, { kind: "text", field: index }, answer.text.cursor)}
@@ -256,6 +261,7 @@ function choiceControls(model: HtmlFormModel, index: number, field: ChoiceField)
 				placeholder="type your own"
 				text={answer.other.text}
 				cursor={answer.other.cursor}
+				ghost={model.ghost({ kind: "other", field: index })}
 				onEdit={edit => model.edit({ kind: "other", field: index }, edit)}
 				{...vimProps(model, { kind: "other", field: index }, answer.other.cursor)}
 			/>,
@@ -275,6 +281,7 @@ function choiceControls(model: HtmlFormModel, index: number, field: ChoiceField)
 					maxLines={dropdown ? 3 : 1}
 					text={note.line.text}
 					cursor={note.line.cursor}
+					ghost={model.ghost({ kind: "note" })}
 					onEdit={edit => model.edit({ kind: "note" }, edit)}
 					{...vimProps(model, { kind: "note" }, note.line.cursor)}
 				/>
@@ -470,6 +477,7 @@ function Actions(props: { readonly model: HtmlFormModel; readonly remaining?: nu
 
 export function HtmlFormDialog(props: HtmlFormProps): JSXNode {
 	const model = props.model;
+	if (props.autocomplete !== undefined) model.attachTextAssist(() => ({ autocomplete: props.autocomplete }));
 	const { intro, groups } = model.layout;
 	// The open group (or -1 for the Submit row); each change asks the host to bring it into view again.
 	const openGroup = computed(() => {

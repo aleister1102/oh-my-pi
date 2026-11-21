@@ -108,6 +108,7 @@ interface View {
 		| { readonly field: number; readonly option: number; readonly text: string; readonly cursor: number }
 		| undefined;
 	readonly focused: boolean;
+	readonly ghost?: string;
 }
 
 /** A column of rows, the highlighted row's range, and overlays to draw over it. */
@@ -150,12 +151,17 @@ function caretLine(
 	cursor: number,
 	placeholder?: string,
 	selection?: { readonly from: number; readonly to: number } | null,
+	ghost?: string,
 ): string {
 	const flat = text.replaceAll("\n", " ");
 	if (selection && selection.to > selection.from)
 		return `${flat.slice(0, selection.from)}${theme.style("inverse", flat.slice(selection.from, selection.to))}${flat.slice(selection.to)}`;
 	const at = Math.max(0, Math.min(cursor, flat.length));
 	if (at >= flat.length) {
+		if (ghost) {
+			const first = String.fromCodePoint(ghost.codePointAt(0)!);
+			return `${flat}${theme.style("inverse", first)}${theme.fg("dim", ghost.slice(first.length))}`;
+		}
 		const caret = theme.style("inverse", " ");
 		return `${flat}${caret}${!flat && placeholder ? theme.fg("dim", placeholder) : ""}`;
 	}
@@ -310,6 +316,7 @@ function optionRows(
 						answer.other.cursor,
 						"type your own",
 						model.vim({ kind: "other", field: index })?.selection(),
+						!view.note ? view.ghost : undefined,
 					)
 				: answer.other.text
 					? theme.fg(
@@ -349,7 +356,7 @@ function optionRows(
 			const label = flattenLine(spansText(field.options[row]!.label));
 			lines.push(clip(`    ${theme.fg("muted", `Note for ${label} · ${noteEditHint(model)}`)}`, width));
 			lines.push(
-				`    ${theme.fgResolved("text", `${view.note.text.slice(0, view.note.cursor)}▏${view.note.text.slice(view.note.cursor)}`)}`,
+				`    ${theme.fgResolved("text", `${view.note.text.slice(0, view.note.cursor)}▏${view.note.text.slice(view.note.cursor)}`)}${view.ghost ? theme.fg("dim", view.ghost) : ""}`,
 			);
 			column.focusEnd = lines.length;
 		}
@@ -431,7 +438,7 @@ function openFieldLines(
 				at: lines.length,
 				rows: [
 					clip(`    ${theme.fg("muted", `Note for ${label} · ${noteEditHint(model)}`)}`, width),
-					`    ${theme.fgResolved("text", `${view.note.text.slice(0, view.note.cursor)}▏${view.note.text.slice(view.note.cursor)}`)}`,
+					`    ${theme.fgResolved("text", `${view.note.text.slice(0, view.note.cursor)}▏${view.note.text.slice(view.note.cursor)}`)}${view.ghost ? theme.fg("dim", view.ghost) : ""}`,
 				],
 			};
 		} else if (view.dropdown !== undefined) column.overlay = { at: lines.length, rows: [] };
@@ -452,8 +459,9 @@ function openFieldLines(
 				const row = rows[r] ?? "";
 				let content = theme.fgResolved("text", row);
 				if (r === caretRow && view.focused) {
-					if (caretCol >= row.length) content = theme.fgResolved("text", `${row}▏`);
-					else {
+					if (caretCol >= row.length) {
+						content = theme.fgResolved("text", `${row}▏`) + (view.ghost ? theme.fg("dim", view.ghost) : "");
+					} else {
 						const ch = String.fromCodePoint(row.codePointAt(caretCol)!);
 						content = theme.fgResolved(
 							"text",
@@ -478,6 +486,7 @@ function openFieldLines(
 				secret ? 0 : answer.text.cursor,
 				field.placeholder || undefined,
 				model.vim({ kind: "text", field: index })?.selection(),
+				view.ghost,
 			);
 			lines.push(clip(`  ${bar} ${line}`, width));
 		}
@@ -563,14 +572,22 @@ function buildColumn(cx: PaintContext, look: HtmlFormLook, view: View, width: nu
 
 function currentView(model: HtmlFormModel): View {
 	const note = model.note();
+	const active = model.active();
+	const row = model.row();
+	const ghost = note
+		? model.ghost({ kind: "note" })
+		: active === "submit"
+			? undefined
+			: model.ghost({ kind: model.field(active).kind === "text" ? "text" : "other", field: active });
 	return {
-		active: model.active(),
-		row: model.row(),
+		active,
+		row,
 		dropdown: model.dropdown(),
 		note: note
 			? { field: note.field, option: note.option, text: note.line.text, cursor: note.line.cursor }
 			: undefined,
 		focused: model.focused(),
+		ghost,
 	};
 }
 

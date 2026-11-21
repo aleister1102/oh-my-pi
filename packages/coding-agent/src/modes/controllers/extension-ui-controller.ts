@@ -954,6 +954,7 @@ export class ExtensionUiController {
 						media,
 						now,
 						timeout,
+						autocomplete: cfgSpellingAutocomplete.get(this.ctx.settings),
 						terminalRows: () => this.ctx.shell.size().rows,
 						skipNotice: () => this.#skipNotice(),
 					});

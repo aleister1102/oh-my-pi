@@ -69,6 +69,9 @@
 - Preserved prefilled or hidden `__proto__` controls when ask HTML forms time out.
 - A single-question ask form now submits on the first Enter press.
 - Improved native-terminal ask forms so answering long questions no longer causes the entire card to resize and stall on every movement.
+- HTML form text fields can show word suggestions. Tab accepts a suggestion when present and otherwise moves to the next field.
+- Fixed the `status` status-line segment repainting extension `ctx.ui.setStatus` text in the accent colour: statuses that set their own foreground colour or text style keep it, and uncoloured ones still take the accent ([#19727](https://github.com/can1357/oh-my-pi/pull/19727) by [@robfeldmann](https://github.com/robfeldmann))
+- Scrolling no longer drops the background from truncated rows, so tinted lines keep their color to the end of the viewport ([#19632](https://github.com/can1357/oh-my-pi/pull/19632) by [@yuzu-octopus](https://github.com/yuzu-octopus))
 
 ## [19.0.1] - 2026-11-19
 

@@ -10,7 +10,7 @@
  * to their answers); other groups show only their folded fields.
  */
 import type { ImageContent } from "@oh-my-pi/pi-ai";
-import { batch, type KeyEvent, type Signal, signal, type TextEdit, untrack } from "@oh-my-pi/pi-tui";
+import { batch, type KeyEvent, onCleanup, type Signal, signal, type TextEdit, untrack } from "@oh-my-pi/pi-tui";
 import { flattenLine } from "@oh-my-pi/pi-tui/text/sanitize";
 import { applyEdit, applyMaskedEdit } from "../../overlays/panels/common";
 import { getKeybindings } from "../../../config/keybindings/keybindings";
@@ -27,6 +27,7 @@ import {
 } from "../../../tools/html-form/data";
 import type { ChoiceField, FormField, HtmlForm, TextField } from "../../../tools/html-form/parse";
 import { spansText } from "../../../tools/html-form/parse";
+import { createTextAssist, type TextAssistFeatures, textEditForKey } from "../../composer/text-assist";
 import { type DialogVim, UndoHistory, VimEditor } from "../../composer/vim-editor";
 import { editLine, type LineState } from "../../overlays/settings/line-edit";
 import type { AskPill } from "../../overlays/panels/ask-dialog";
@@ -153,6 +154,8 @@ export function isDropdown(field: FormField): boolean {
 	return field.kind === "choice" && field.select && !field.multi;
 }
 
+const EMPTY_PROSE: LineState = { text: "", cursor: 0 };
+
 export class HtmlFormModel {
 	readonly form: HtmlForm;
 	readonly questions: Map<FormField, string>;
@@ -186,6 +189,7 @@ export class HtmlFormModel {
 	readonly #vims = new Map<string, VimEditor>();
 	/** The note editor's undo, cleared as each note opens. */
 	#noteHistory: UndoHistory | undefined;
+	#assist?: ReturnType<typeof createTextAssist>;
 
 	constructor(
 		form: HtmlForm,
@@ -246,6 +250,59 @@ export class HtmlFormModel {
 		return this.#vims.get(boxKey(box));
 	}
 
+	/** Mount assistance only for prose; structured input and password values never reach a provider. */
+	attachTextAssist(features: () => TextAssistFeatures): void {
+		const assist = createTextAssist({
+			value: () => {
+				const box = this.#proseBox();
+				if (!box) return EMPTY_PROSE;
+				if (box.kind === "note") return this.note()?.line ?? EMPTY_PROSE;
+				const answer = this.answer(box.field);
+				return box.kind === "text" ? answer.text : answer.other;
+			},
+			active: () => this.#proseBox() !== undefined,
+			scope: () => {
+				const box = this.#proseBox();
+				if (box?.kind === "note") {
+					const note = this.note();
+					return `note:${note?.field}:${note?.option}`;
+				}
+				return box && boxKey(box);
+			},
+			apply: edit => {
+				const box = this.#proseBox();
+				if (box) this.#applyEdit(box, edit);
+			},
+			features,
+		});
+		this.#assist = assist;
+		onCleanup(() => {
+			if (this.#assist === assist) this.#assist = undefined;
+		});
+	}
+
+	/** The suffix for the active editor, never part of the stored answer. */
+	ghost(box: TextBox): string | undefined {
+		return this.#assistFor(box)?.ghost();
+	}
+
+	#proseBox(): TextBox | undefined {
+		if (this.#done || !this.focused()) return undefined;
+		const box = this.#activeBox();
+		if (!box) return undefined;
+		if (box.kind === "text") {
+			const field = this.field(box.field);
+			if (field.kind !== "text" || (!field.multiline && field.type !== "text")) return undefined;
+		}
+		const vim = this.vim(box);
+		return !vim || vim.mode() === "insert" ? box : undefined;
+	}
+
+	#assistFor(box: TextBox): ReturnType<typeof createTextAssist> | undefined {
+		const current = this.#proseBox();
+		return current && boxKey(current) === boxKey(box) ? this.#assist : undefined;
+	}
+
 	/** The line and caret of `box`. */
 	#line(box: TextBox): LineState {
 		if (box.kind === "note") return untrack(this.note)?.line ?? { text: "", cursor: 0 };
@@ -272,6 +329,12 @@ export class HtmlFormModel {
 	edit(box: TextBox, edit: TextEdit): void {
 		const active = this.#activeBox();
 		if (!active || boxKey(box) !== boxKey(active)) return;
+		const assist = this.#assistFor(box);
+		if (assist) assist.edit(edit, event => this.#applyEdit(box, event));
+		else this.#applyEdit(box, edit);
+	}
+
+	#applyEdit(box: TextBox, edit: TextEdit): void {
 		const field = box.kind === "text" ? this.field(box.field) : undefined;
 		const apply = field?.kind === "text" && field.type === "password" ? applyMaskedEdit : applyEdit;
 		const next = apply(this.#line(box), edit);
@@ -281,8 +344,13 @@ export class HtmlFormModel {
 	/** A key typed into `box`: Vim takes it first in Vim mode, else it edits the line (`accept` may refuse). */
 	#typeKey(box: TextBox, key: KeyEvent, accept?: (next: LineState) => boolean): void {
 		if (this.vim(box)?.handle(key)) return;
-		const next = editLine(this.#line(box), key);
-		if (next && (accept?.(next) ?? true)) this.#editBox(box, next);
+		const before = this.#line(box);
+		const next = editLine(before, key);
+		if (!next || !(accept?.(next) ?? true)) return;
+		const assist = this.#assistFor(box);
+		const event = assist && textEditForKey(before, next, key);
+		if (assist && event) assist.edit(event, edit => this.#applyEdit(box, edit));
+		else this.#editBox(box, next);
 	}
 
 	get fields(): readonly FormField[] {
@@ -626,10 +694,10 @@ export class HtmlFormModel {
 			this.#update(note.field, answer => {
 				const notes = new Map(answer.notes);
 				const noteImages = new Map(answer.noteImages);
-				const saved = compactNote(note.line.text, note.images);
-				if (note.line.text.trim() === "") notes.delete(note.option);
+				const saved = compactNote(note.line.text.trim(), note.images);
+				if (saved.text === "") notes.delete(note.option);
 				else notes.set(note.option, saved.text);
-				if (note.line.text.trim() === "" || saved.images.length === 0) noteImages.delete(note.option);
+				if (saved.text === "" || saved.images.length === 0) noteImages.delete(note.option);
 				else noteImages.set(note.option, saved.images);
 				return { ...answer, notes, noteImages };
 			});
@@ -697,6 +765,7 @@ export class HtmlFormModel {
 				vim.handle(key);
 				return true;
 			}
+			if (box && this.#assistFor(box)?.handleKey(key)) return true;
 			if (untrack(this.note)) return this.#noteKey(key);
 			if (untrack(this.dropdown) !== undefined) return this.#dropdownKey(key);
 		}
@@ -939,13 +1008,13 @@ export class HtmlFormModel {
 
 	/** The box taking keys and pastes: the open note, the open text field, or the highlighted Other answer. */
 	#activeBox(): TextBox | undefined {
-		if (untrack(this.hidden)) return undefined;
-		if (untrack(this.note)) return { kind: "note" };
-		const active = untrack(this.active);
+		if (this.hidden()) return undefined;
+		if (this.note()) return { kind: "note" };
+		const active = this.active();
 		if (active === "submit") return undefined;
 		const field = this.field(active);
 		if (field.kind === "text") return { kind: "text", field: active };
-		if (!isDropdown(field) && untrack(this.dropdown) === undefined && untrack(this.row) === OTHER_ROW)
+		if (!isDropdown(field) && this.dropdown() === undefined && this.row() === OTHER_ROW)
 			return { kind: "other", field: active };
 		return undefined;
 	}
