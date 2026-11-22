@@ -13,6 +13,8 @@
 
 - Added host-provided runtime choices for settings menus through `SettingsRuntimeContext.runtimeOptions`, while preserving built-in choices for thinking levels, themes, and composer shapes.
 - Added interrupt metadata so hosts can distinguish a parent-agent termination from a user-initiated interrupt.
+- Added `AGENT_KILL_LABEL`, `InterruptReason` and `isInterruptReason` so hosts can tell a parent agent's kill apart from a user interrupt ([#20012](https://github.com/can1357/oh-my-pi/pull/20012) by [@nick-maderight](https://github.com/nick-maderight))
+- HTML ask forms can use macOS autocorrection in text answers, Other answers, and option notes, independently of word completion.
 
 ### Fixed
 

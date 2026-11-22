@@ -955,6 +955,7 @@ export class ExtensionUiController {
 						now,
 						timeout,
 						autocomplete: cfgSpellingAutocomplete.get(this.ctx.settings),
+						spellingFeatures: { autocorrect: cfgSpellingAutocorrect.get(this.ctx.settings) },
 						terminalRows: () => this.ctx.shell.size().rows,
 						skipNotice: () => this.#skipNotice(),
 					});

@@ -149,6 +149,8 @@
 - The quick model picker refreshes stale provider catalogs in the background, so long-running sessions can discover newly available models.
 - On Linux, language-server file watching now adapts to the inotify watch limit so large workspaces are less likely to interfere with other file watchers and system services.
 - The `eval` tool now documents its default 30-second cell deadline in its prompt and timeout parameter.
+- `/wt` (TUI, ACP, RPC and `worktree.onStart`) runs the new worktree's `post-checkout` hook as `git worktree add` does, with a spinner in the TUI, then loads the skills and commands it added; a failing hook keeps the worktree and shows a warning, and quitting while it runs keeps that worktree with a warning. In an ovnfs checkout only a `core.hooksPath` hook runs ([#20045](https://github.com/can1357/oh-my-pi/pull/20045) by [@Dangerboi](https://github.com/Dangerboi))
+- Interactive ask forms now honor `spelling.autocorrect` on macOS for free-text answers and notes.
 
 ### Fixed
 

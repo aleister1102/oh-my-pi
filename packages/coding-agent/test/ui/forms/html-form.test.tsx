@@ -4,6 +4,7 @@
  * and host changes (focus, skip notice, the clock).
  */
 import { expect, test, vi } from "bun:test";
+import * as natives from "@oh-my-pi/pi-natives";
 import { nativeShell } from "../../helpers/native-shell";
 import { createRoot, signal } from "@oh-my-pi/pi-tui";
 import { CORPUS_NOW } from "@oh-my-pi/pi-tui/testing/corpus";
@@ -82,6 +83,57 @@ test("Tab accepts a shown answer completion before leaving the field", async () 
 	} finally {
 		dispose();
 		backend.mockRestore();
+	}
+});
+
+test("autocorrects prose answers and option notes without sending a structured answer to spelling", async () => {
+	const available = vi.spyOn(natives, "macOSSpellCheckerAvailable").mockReturnValue(true);
+	const autocorrect = vi.spyOn(natives, "macOSAutocorrectWord").mockImplementation(async (line, start, length) =>
+		line.slice(start, start + length) === "recieved" ? "received" : null,
+	);
+	const onSubmit = vi.fn();
+	const model = new HtmlFormModel(
+		parseHtmlForm(`<form>
+			<input name="subject"><textarea name="details"></textarea>
+			<label><input type="checkbox" name="extras" value="ci" checked> CI</label>
+			<label><input type="checkbox" name="extras" value="docker"> Docker</label>
+			<input type="password" name="private">
+		</form>`),
+		{ onSubmit, onCancel: () => {} },
+	);
+	const dispose = createRoot(dispose => {
+		HtmlFormDialog({ model, spellingFeatures: { autocorrect: true } });
+		return dispose;
+	});
+	const typeMisspelling = async () => {
+		for (const ch of "recieved") model.key(keyEvent(ch));
+		model.key(keyEvent("space"));
+		await settle();
+	};
+	try {
+		await typeMisspelling();
+		model.key(keyEvent("tab"));
+		await typeMisspelling();
+		model.key(keyEvent("tab"));
+		model.startNote();
+		await typeMisspelling();
+		model.key(keyEvent("enter"));
+		model.key(keyEvent("down"));
+		model.key(keyEvent("down"));
+		await typeMisspelling();
+		model.key(keyEvent("tab"));
+		await typeMisspelling();
+		model.key(keyEvent("tab"));
+		model.key(keyEvent("enter"));
+		expect(onSubmit).toHaveBeenCalledWith(
+			{ subject: "received ", details: "received ", extras: ["ci", "received"], private: "recieved " },
+			[expect.objectContaining({ name: "extras", value: "ci", text: "received" })],
+		);
+		expect(autocorrect).toHaveBeenCalledTimes(4);
+	} finally {
+		dispose();
+		autocorrect.mockRestore();
+		available.mockRestore();
 	}
 });
 

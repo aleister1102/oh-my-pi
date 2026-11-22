@@ -38,6 +38,7 @@ export interface HtmlFormProps {
 	readonly timeout?: number;
 	/** Prose assistance; passwords, emails, URLs and numbers are excluded. */
 	readonly autocomplete?: WordCompletionMethod;
+	readonly spellingFeatures?: { readonly autocorrect: boolean };
 }
 
 /** Rows a picture takes on a tall terminal. */
@@ -477,7 +478,12 @@ function Actions(props: { readonly model: HtmlFormModel; readonly remaining?: nu
 
 export function HtmlFormDialog(props: HtmlFormProps): JSXNode {
 	const model = props.model;
-	if (props.autocomplete !== undefined) model.attachTextAssist(() => ({ autocomplete: props.autocomplete }));
+	if (props.autocomplete !== undefined || props.spellingFeatures !== undefined) {
+		model.attachTextAssist(() => ({
+			autocomplete: props.autocomplete,
+			autocorrect: props.spellingFeatures?.autocorrect,
+		}));
+	}
 	const { intro, groups } = model.layout;
 	// The open group (or -1 for the Submit row); each change asks the host to bring it into view again.
 	const openGroup = computed(() => {

@@ -1247,7 +1247,7 @@ export const cfgSpellingAutocorrect = register({
 		tab: "interaction",
 		group: "Input",
 		label: "Autocorrect (macOS)",
-		description: "Apply confident macOS spelling corrections after completed words",
+		description: "Apply confident macOS spelling corrections after completed words, including in ask forms",
 		condition: "macOS",
 	},
 });
