@@ -4,7 +4,7 @@
  * Compressed files keep their path, bytes, and mtime; the filesystem inflates
  * them on read, so every session reader works unchanged. Supported volumes:
  *
- * - APFS (macOS): `ditto --hfsCompression` writes compressed copies that are
+ * - APFS (macOS): ditto or Applesauce compresses scratch copies that are
  *   verified and renamed over the originals. A later write stores the file
  *   uncompressed again.
  * - NTFS (Windows): `compact /c` sets LZNT1 compression on each file in place,
@@ -16,9 +16,10 @@ import * as path from "node:path";
 import { $ } from "bun";
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { COMPRESS_SCRATCH_PREFIX } from "@oh-my-pi/omp-stats/parser";
-import { errorMessage, isEnoent } from "@oh-my-pi/pi-utils";
+import { errorMessage, isEnoent, normalizePathForComparison } from "@oh-my-pi/pi-utils";
 import { FileSessionStorage } from "../session/session-storage";
 import { sha256File } from "../utils/file-hash";
+import type { ApfsCompressor } from "./gc-settings";
 
 const SCRATCH_GLOB = new Bun.Glob(`**/${COMPRESS_SCRATCH_PREFIX}*`);
 /**
@@ -157,14 +158,25 @@ export async function compressCandidate(file: string): Promise<CompressCandidate
 	};
 }
 
+function isWithinNormalizedRoot(root: string, candidate: string): boolean {
+	return candidate === root || candidate.startsWith(root.endsWith(path.sep) ? root : `${root}${path.sep}`);
+}
+
 /**
  * Count, and with `apply` remove, scratch directories under `roots` that a
  * killed run left behind; the caller's gc lock rules out a live one. Only a
  * directory holding the owner marker is removed recursively. An unmarked one
  * is gc's only while empty (a run killed before writing the marker).
+ * Scratch directories inside or containing protected artifact roots are ignored.
  */
-export async function sweepCompressScratch(roots: string[], apply: boolean, errors: string[]): Promise<number> {
+export async function sweepCompressScratch(
+	roots: string[],
+	apply: boolean,
+	errors: string[],
+	excludedArtifacts?: ReadonlySet<string>,
+): Promise<number> {
 	let found = 0;
+	const excludedRoots = excludedArtifacts ? [...excludedArtifacts] : [];
 	for (const root of roots) {
 		const dirs: string[] = [];
 		try {
@@ -176,6 +188,19 @@ export async function sweepCompressScratch(roots: string[], apply: boolean, erro
 			continue;
 		}
 		for (const dir of dirs) {
+			if (excludedRoots.length > 0) {
+				const normalizedDir = normalizePathForComparison(dir);
+				if (
+					excludedRoots.some(
+						root =>
+							isWithinNormalizedRoot(root, normalizedDir) ||
+							// A recursive removal must not cross into a protected artifact tree.
+							isWithinNormalizedRoot(normalizedDir, root),
+					)
+				) {
+					continue;
+				}
+			}
 			try {
 				if (!(await fs.lstat(dir)).isDirectory()) continue;
 				const owned = await fs.exists(path.join(dir, SCRATCH_OWNER_MARKER));
@@ -199,7 +224,8 @@ export async function sweepCompressScratch(roots: string[], apply: boolean, erro
  *
  * APFS: each directory's files are copied with compression into a scratch
  * directory beside them, and a copy replaces its original only when its size
- * and SHA-256 match and the original is unchanged since it was selected.
+ * and SHA-256 match, its nanosecond mtime is preserved, and the original is
+ * unchanged since it was selected.
  * Paths in `transcripts` (files with a session header) swap under the session
  * publish lock. NTFS: the filesystem compresses each file in place.
  */
@@ -207,6 +233,7 @@ export async function compressFilesInPlace(
 	candidates: CompressCandidate[],
 	method: CompressMethod,
 	transcripts: ReadonlySet<string>,
+	apfsCompressor: ApfsCompressor = "ditto",
 ): Promise<CompressBatchResult> {
 	const result: CompressBatchResult = { compressed: 0, allocatedAfter: 0, errors: [] };
 	if (method === "ntfs") {
@@ -224,7 +251,7 @@ export async function compressFilesInPlace(
 	}
 	for (const [dir, group] of byDir) {
 		for (let start = 0; start < group.length; start += DITTO_BATCH) {
-			await compressBatch(dir, group.slice(start, start + DITTO_BATCH), transcripts, result);
+			await compressBatch(dir, group.slice(start, start + DITTO_BATCH), transcripts, result, apfsCompressor);
 		}
 	}
 	return result;
@@ -239,7 +266,11 @@ export async function compressFilesInPlace(
  * when the compression tool itself fails, so a broken run is not mistaken for
  * a volume that stores files uncompressed.
  */
-export async function compressionWorks(dir: string, method: CompressMethod): Promise<boolean> {
+export async function compressionWorks(
+	dir: string,
+	method: CompressMethod,
+	apfsCompressor: ApfsCompressor = "ditto",
+): Promise<boolean> {
 	const scratch = await fs.mkdtemp(path.join(dir, COMPRESS_SCRATCH_PREFIX));
 	try {
 		await Bun.write(path.join(scratch, SCRATCH_OWNER_MARKER), "");
@@ -247,7 +278,7 @@ export async function compressionWorks(dir: string, method: CompressMethod): Pro
 		await Bun.write(probe, "omp gc compression probe\n".repeat(10_000));
 		const candidate = await compressCandidate(probe);
 		if (!candidate) return false;
-		const batch = await compressFilesInPlace([candidate], method, new Set());
+		const batch = await compressFilesInPlace([candidate], method, new Set(), apfsCompressor);
 		if (batch.errors.length > 0) throw new Error(batch.errors.join("; "));
 		return batch.compressed === 1;
 	} finally {
@@ -326,6 +357,7 @@ async function compressBatch(
 	batch: CompressCandidate[],
 	transcripts: ReadonlySet<string>,
 	result: CompressBatchResult,
+	apfsCompressor: ApfsCompressor,
 ): Promise<void> {
 	// Every candidate counts at its current allocation until its compressed copy replaces it,
 	// so failed and skipped files are still reported as occupying disk.
@@ -333,31 +365,55 @@ async function compressBatch(
 	let scratch: string | undefined;
 	try {
 		// A fresh directory: a pre-existing one with this name is never gc's to remove.
-		scratch = await fs.mkdtemp(path.join(dir, COMPRESS_SCRATCH_PREFIX));
-		await Bun.write(path.join(scratch, SCRATCH_OWNER_MARKER), "");
-		const digests = await sha256Files(batch.map(candidate => candidate.path));
-		const copy = await $`ditto --hfsCompression ${batch.map(candidate => candidate.path)} ${scratch}`
-			.quiet()
-			.nothrow();
+		const scratchDir = await fs.mkdtemp(path.join(dir, COMPRESS_SCRATCH_PREFIX));
+		scratch = scratchDir;
+		await Bun.write(path.join(scratchDir, SCRATCH_OWNER_MARKER), "");
+		const sources = batch.map(candidate => candidate.path);
+		const digests = await sha256Files(sources);
+		const dittoFlag = apfsCompressor === "applesauce" ? "--nohfsCompression" : "--hfsCompression";
+		const copy = await $`ditto ${dittoFlag} ${sources} ${scratchDir}`.quiet().nothrow();
 		if (copy.exitCode !== 0) {
 			result.errors.push(`${dir}: ditto exited ${copy.exitCode}: ${copy.stderr.toString().trim()}`);
 			return;
 		}
+		const copyPaths = sources.map(file => path.join(scratchDir, path.basename(file)));
+		if (apfsCompressor === "applesauce") {
+			for (const copyPath of copyPaths) {
+				if (!(await fs.lstat(copyPath)).isFile()) {
+					result.errors.push(`${copyPath}: refusing to run applesauce on a non-regular copy`);
+					return;
+				}
+			}
+			const run = await $`applesauce compress --verify ${copyPaths}`.quiet().nothrow();
+			if (run.exitCode !== 0) {
+				const output = run.stderr.toString().trim() || run.stdout.toString().trim();
+				result.errors.push(`${dir}: applesauce exited ${run.exitCode}${output ? `: ${output}` : ""}`);
+				return;
+			}
+		}
 		const storage = new FileSessionStorage();
 		for (const [index, candidate] of batch.entries()) {
-			const copyPath = path.join(scratch, path.basename(candidate.path));
+			const copyPath = copyPaths[index];
 			try {
-				const copied = await fs.lstat(copyPath);
-				if (copied.size !== candidate.bytes || (await sha256File(copyPath)) !== digests[index]) {
+				const copied = await fs.lstat(copyPath, { bigint: true });
+				if (
+					!copied.isFile() ||
+					copied.size !== BigInt(candidate.bytes) ||
+					(await sha256File(copyPath)) !== digests[index]
+				) {
 					result.errors.push(`${candidate.path}: compressed copy does not match the original`);
 					continue;
 				}
+				if (copied.mtimeNs !== candidate.mtimeNs) {
+					result.errors.push(`${candidate.path}: compressed copy does not preserve the original mtime`);
+					continue;
+				}
+				const allocated = Number(copied.blocks) * 512;
 				// Incompressible: APFS stored the copy uncompressed, so the original stays.
-				if (copied.blocks * 512 >= candidate.allocated) continue;
-				// ditto copied the nanosecond mtime; the rename keeps it.
+				if (allocated >= candidate.allocated) continue;
 				if (!swapIfUnchanged(storage, candidate, copyPath, transcripts.has(candidate.path))) continue;
 				result.compressed += 1;
-				result.allocatedAfter += copied.blocks * 512 - candidate.allocated;
+				result.allocatedAfter += allocated - candidate.allocated;
 			} catch (error) {
 				result.errors.push(`${candidate.path}: ${errorMessage(error)}`);
 			}

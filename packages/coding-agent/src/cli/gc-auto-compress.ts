@@ -60,7 +60,7 @@ export async function scheduleGcAutoCompress(agentDir: string): Promise<Subproce
 			throw error;
 		}
 		try {
-			// Inherited by `ditto`/`compact`, so the copy-and-verify work yields to the foreground.
+			// Compressor subprocesses inherit this priority.
 			os.setPriority(proc.pid, os.constants.priority.PRIORITY_LOW);
 		} catch {
 			// Already exited, or the platform refused; the run proceeds at normal priority.

@@ -5,6 +5,7 @@
 import { Command, Flags } from "@oh-my-pi/pi-utils/cli";
 import { gcHelp as commandHelp } from "../cli/command-help";
 import { collectGcErrors, type GcCommandArgs, runGcCommand } from "../cli/gc-cli";
+import { APFS_COMPRESSORS, type ApfsCompressor } from "../cli/gc-settings";
 
 export default class Gc extends Command {
 	static description = commandHelp.description;
@@ -33,6 +34,14 @@ export default class Gc extends Command {
 		}),
 		"stale-retain-days": Flags.integer({ description: "Minimum debug report/collab replica age before pruning" }),
 		"compress-after-days": Flags.integer({ description: "Minimum idle days before compressing a session" }),
+		"apfs-compressor": Flags.string({
+			description: "APFS compressor (defaults to gc.apfsCompressor)",
+			options: [...APFS_COMPRESSORS],
+		}),
+		"compress-exclude": Flags.string({
+			description: "Exclude a session transcript and its artifacts from compression (repeatable)",
+			multiple: true,
+		}),
 		"strip-after-days": Flags.integer({ description: "Minimum idle days before stripping a session" }),
 	};
 
@@ -55,6 +64,8 @@ export default class Gc extends Command {
 				staleRetainNewest: flags["stale-retain-newest"],
 				staleRetainDays: flags["stale-retain-days"],
 				compressAfterDays: flags["compress-after-days"],
+				apfsCompressor: flags["apfs-compressor"] as ApfsCompressor | undefined,
+				compressExclude: flags["compress-exclude"],
 				stripAfterDays: flags["strip-after-days"],
 			},
 			progress: process.stderr,

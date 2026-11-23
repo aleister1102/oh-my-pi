@@ -2547,6 +2547,10 @@ const method = await gcCompress.compressMethod(os.tmpdir());
 const supported = method !== undefined;
 const compresses = method !== undefined && (await gcCompress.compressionWorks(os.tmpdir(), method));
 const apfsCompresses = compresses && method === "apfs";
+const applesauceCompresses =
+	method === "apfs" &&
+	Bun.which("applesauce") !== null &&
+	(await gcCompress.compressionWorks(os.tmpdir(), method, "applesauce"));
 
 /**
  * Replace the filesystem backend so gc's selection, lease, and accounting
@@ -2578,8 +2582,13 @@ describe("runGcCommand session compression", () => {
 	}
 
 	/** An idle session with a compressible transcript and one artifact; filler precedes its final turn. */
-	async function writeIdleSession(id: string, status: "complete" | "pending" = "complete", ageDays = 30) {
-		const file = await writeSession(root, "project", id, status);
+	async function writeIdleSession(
+		id: string,
+		status: "complete" | "pending" = "complete",
+		ageDays = 30,
+		project = "project",
+	) {
+		const file = await writeSession(root, project, id, status);
 		const lines = (await Bun.file(file).text()).split("\n");
 		lines.splice(1, 0, filler.trimEnd());
 		await Bun.write(file, lines.join("\n"));
@@ -2592,12 +2601,12 @@ describe("runGcCommand session compression", () => {
 	}
 
 	async function snapshot(file: string) {
-		const stat = await fs.stat(file);
+		const stat = await fs.stat(file, { bigint: true });
 		return {
-			bytes: await Bun.file(file).text(),
-			mtimeNs: (await fs.stat(file, { bigint: true })).mtimeNs,
-			allocated: stat.blocks * 512,
-			size: stat.size,
+			bytes: await fs.readFile(file),
+			mtimeNs: stat.mtimeNs,
+			allocated: Number(stat.blocks) * 512,
+			size: Number(stat.size),
 		};
 	}
 
@@ -2611,32 +2620,50 @@ describe("runGcCommand session compression", () => {
 		expect(await snapshot(file)).toEqual(before);
 	});
 
-	test.skipIf(!compresses)("--apply stores an idle session compressed with identical bytes and mtimes", async () => {
-		const { file, artifact } = await writeIdleSession(Bun.randomUUIDv7());
-		const before = await Promise.all([snapshot(file), snapshot(artifact)]);
+	for (const backend of [
+		{ name: "NTFS", method: "ntfs", works: method === "ntfs" && compresses, compressor: "applesauce" },
+		{ name: "APFS ditto", method: "apfs", works: apfsCompresses },
+		{ name: "APFS applesauce", method: "apfs", works: applesauceCompresses, compressor: "applesauce" },
+	]) {
+		test.skipIf(!backend.works)(
+			`--apply stores an idle session compressed with identical bytes and mtimes (${backend.name})`,
+			async () => {
+				const { file, artifact } = await writeIdleSession(Bun.randomUUIDv7());
+				const before = await Promise.all([snapshot(file), snapshot(artifact)]);
+				const argv = ["gc", "--agent-dir", root, "--compress", "--apply", "--json"];
+				if (backend.compressor) argv.push("--apfs-compressor", backend.compressor);
 
-		const result = await runGcCommand({ flags: { agentDir: root, compress: true, apply: true } });
+				await runCli(argv);
 
-		expect(result.compress).toMatchObject({
-			supported: true,
-			method,
-			sessions: 1,
-			wouldCompress: 2,
-			compressed: 2,
-			errors: [],
-		});
-		expect(result.compress?.allocatedAfter).toBeLessThan(result.compress?.allocatedBefore ?? 0);
-		for (const [index, target] of [file, artifact].entries()) {
-			const after = await snapshot(target);
-			expect(after.bytes).toBe(before[index].bytes);
-			expect(after.mtimeNs).toBe(before[index].mtimeNs);
-			expect(after.allocated).toBeLessThan(after.size);
-		}
-		expect((await fs.readdir(path.dirname(file))).filter(name => name.startsWith(".omp-gc-compress-"))).toEqual([]);
+				expect(process.exitCode).toBe(0);
+				const result = JSON.parse(writes.join("")) as GcResult;
+				expect(result.compress).toMatchObject({
+					supported: true,
+					method: backend.method,
+					sessions: 1,
+					wouldCompress: 2,
+					compressed: 2,
+					errors: [],
+				});
+				expect(result.compress?.allocatedAfter).toBeLessThan(result.compress?.allocatedBefore ?? 0);
+				for (const [index, target] of [file, artifact].entries()) {
+					const after = await snapshot(target);
+					expect(after.bytes).toEqual(before[index].bytes);
+					expect(after.mtimeNs).toBe(before[index].mtimeNs);
+					expect(after.allocated).toBeLessThan(after.size);
+				}
+				expect((await fs.readdir(path.dirname(file))).filter(name => name.startsWith(".omp-gc-compress-"))).toEqual(
+					[],
+				);
 
-		const rerun = await runGcCommand({ flags: { agentDir: root, compress: true, apply: true } });
-		expect(rerun.compress).toMatchObject({ wouldCompress: 0, compressed: 0 });
-	});
+				writes.length = 0;
+				await runCli(argv);
+				expect(process.exitCode).toBe(0);
+				const rerun = JSON.parse(writes.join("")) as GcResult;
+				expect(rerun.compress).toMatchObject({ wouldCompress: 0, compressed: 0 });
+			},
+		);
+	}
 
 	test("a dry run reports candidates without rewriting them", async () => {
 		const batches = fakeCompressionBackend();
@@ -2689,6 +2716,53 @@ describe("runGcCommand session compression", () => {
 		expect(applied.compress).toMatchObject({ leftoverScratchDirs: 2, compressed: 2, errors: [] });
 		for (const dir of [inSessions, inArchive]) expect(await fs.exists(dir)).toBe(false);
 		expect(await Bun.file(userArtifact).text()).toBe("keep");
+	});
+
+	test("repeatable --compress-exclude protects only the named session trees in dry-run and apply", async () => {
+		const batches = fakeCompressionBackend("apfs");
+		const id = Bun.randomUUIDv7();
+		const first = await writeIdleSession(id);
+		const second = await writeIdleSession(Bun.randomUUIDv7());
+		// The same transcript basename in another project is not excluded.
+		const selected = await writeIdleSession(id, "complete", 30, "other-project");
+		const scratch = path.join(path.dirname(first.artifact), ".omp-gc-compress-a1b2c3");
+		const owner = path.join(scratch, ".omp-gc-compress-owner");
+		const copy = path.join(scratch, "copy.jsonl");
+		await fs.mkdir(scratch);
+		await Bun.write(owner, "");
+		await Bun.write(copy, filler);
+		const protectedFiles = [first.file, first.artifact, second.file, second.artifact, owner, copy];
+		const before = await Promise.all(protectedFiles.map(snapshot));
+		const argv = [
+			"gc",
+			"--agent-dir",
+			root,
+			"--compress",
+			"--json",
+			"--compress-exclude",
+			first.file,
+			"--compress-exclude",
+			second.file,
+		];
+
+		for (const apply of [false, true]) {
+			writes.length = 0;
+			await runCli(apply ? [...argv, "--apply"] : argv);
+			expect(process.exitCode).toBe(0);
+			const result = JSON.parse(writes.join("")) as GcResult;
+			expect(result.compress).toMatchObject({
+				scanned: 3,
+				skippedLive: 0,
+				skippedExcluded: 2,
+				sessions: 1,
+				wouldCompress: 2,
+				compressed: apply ? 2 : 0,
+				leftoverScratchDirs: 0,
+				errors: [],
+			});
+			expect(batches.flat().sort()).toEqual(apply ? [selected.file, selected.artifact].sort() : []);
+			expect(await Promise.all(protectedFiles.map(snapshot))).toEqual(before);
+		}
 	});
 
 	test.skipIf(!apfsCompresses)("a failed batch still counts its files as allocated afterwards", async () => {
@@ -2810,6 +2884,43 @@ describe("runGcCommand session compression", () => {
 
 		expect(configured.compress?.wouldCompress).toBe(0);
 		expect(overridden.compress?.wouldCompress).toBe(2);
+	});
+
+	// Fail in the selected external executable rather than stubbing the compressor
+	// decision; this exercises CLI selection even without an APFS volume or real tools.
+	test.skipIf(process.platform === "win32").each([
+		["defaults to ditto", undefined, undefined, "ditto"],
+		["uses gc.apfsCompressor even with --compress-after-days", "applesauce", undefined, "applesauce"],
+		["overrides gc.apfsCompressor with applesauce", "ditto", "applesauce", "applesauce"],
+		["overrides gc.apfsCompressor with ditto", "applesauce", "ditto", "ditto"],
+	] as const)("APFS compressor selection %s", async (_name, configured, override, expected) => {
+		spyOn(gcCompress, "compressMethod").mockResolvedValue("apfs");
+		await writeIdleSession(Bun.randomUUIDv7());
+		if (configured) await writeConfig(root, `gc:\n  apfsCompressor: ${configured}\n`);
+		const bin = path.join(root, "bin");
+		await fs.mkdir(bin);
+		for (const tool of ["ditto", "applesauce"]) {
+			// Applesauce stages plain copies before compressing them.
+			const staging =
+				tool === "ditto" ? 'if [ "$1" = "--nohfsCompression" ]; then shift; exec cp -p "$@"; fi\n' : "";
+			await fs.writeFile(
+				path.join(bin, tool),
+				`#!/bin/sh\n${staging}echo "${tool} fixture failure" >&2\nexit 23\n`,
+				{
+					mode: 0o755,
+				},
+			);
+		}
+		process.env.PATH = [bin, process.env.PATH].filter(Boolean).join(path.delimiter);
+		const argv = ["gc", "--agent-dir", root, "--compress", "--apply", "--compress-after-days", "7"];
+		if (override) argv.push("--apfs-compressor", override);
+
+		await runCli(argv);
+
+		expect(process.exitCode).toBe(1);
+		const stderr = stderrWrites.join("");
+		expect(stderr).toContain("compress: compression probe:");
+		expect(stderr).toContain(`${expected} exited 23: ${expected} fixture failure`);
 	});
 
 	test.skipIf(!compresses)(

@@ -8,6 +8,7 @@ import { withStatsSyncLock } from "@oh-my-pi/omp-stats/aggregator";
 import { isCompressScratchPath } from "@oh-my-pi/omp-stats/parser";
 import {
 	errorMessage,
+	expandTilde,
 	formatBytes,
 	getAgentDir,
 	getBlobsDir,
@@ -45,6 +46,8 @@ import {
 	sweepCompressScratch,
 } from "./gc-compress";
 import {
+	type ApfsCompressor,
+	cfgGcApfsCompressor,
 	cfgGcArchive,
 	cfgGcBlobs,
 	cfgGcColdArchiveAfterDays,
@@ -107,6 +110,8 @@ export interface GcCommandFlags {
 	staleRetainNewest?: number;
 	staleRetainDays?: number;
 	compressAfterDays?: number;
+	apfsCompressor?: ApfsCompressor;
+	compressExclude?: string[];
 	stripAfterDays?: number;
 }
 
@@ -189,6 +194,8 @@ export interface CompressGcResult {
 	scanned: number;
 	/** Idle sessions with files to compress that a running process still owns. */
 	skippedLive: number;
+	/** Top-level transcripts explicitly excluded by path, regardless of age or lease. */
+	skippedExcluded: number;
 	/** Sessions with at least one file still stored uncompressed. */
 	sessions: number;
 	wouldCompress: number;
@@ -271,6 +278,8 @@ interface ResolvedGcOptions {
 	staleRetainNewest: number;
 	staleRetainDays: number;
 	compressAfterDays: number;
+	apfsCompressor: ApfsCompressor;
+	compressExclude: string[];
 	stripAfterDays: number;
 	walBusyTimeoutMs: number;
 	/** Wraps each slow per-item loop in a progress bar. */
@@ -330,7 +339,8 @@ async function resolveOptions({
 			flags.retainNewestPerCwd === undefined);
 	const needsStaleSettings =
 		staleSelected && (flags.staleRetainNewest === undefined || flags.staleRetainDays === undefined);
-	const needsCompressSettings = compressSelected && flags.compressAfterDays === undefined;
+	const needsCompressSettings =
+		compressSelected && (flags.compressAfterDays === undefined || flags.apfsCompressor === undefined);
 	const needsStripSettings = stripSelected && flags.stripAfterDays === undefined;
 	const settings =
 		!selected || needsArchiveSettings || needsStaleSettings || needsCompressSettings || needsStripSettings
@@ -375,6 +385,8 @@ async function resolveOptions({
 			read(cfgGcCompressAfterDays),
 			cfgGcCompressAfterDays.default,
 		),
+		apfsCompressor: flags.apfsCompressor ?? read(cfgGcApfsCompressor),
+		compressExclude: flags.compressExclude ?? [],
 		stripAfterDays: numberSetting(flags.stripAfterDays, read(cfgGcStripAfterDays), cfgGcStripAfterDays.default),
 		walBusyTimeoutMs,
 		track: createProgressTracker(progress),
@@ -2000,6 +2012,7 @@ async function runCompressGc(options: ResolvedGcOptions, archiveRoot: string): P
 		method,
 		scanned: 0,
 		skippedLive: 0,
+		skippedExcluded: 0,
 		sessions: 0,
 		wouldCompress: 0,
 		compressed: 0,
@@ -2011,6 +2024,9 @@ async function runCompressGc(options: ResolvedGcOptions, archiveRoot: string): P
 	};
 	if (method === undefined) return result;
 
+	const excludedTranscripts = new Set(
+		options.compressExclude.map(file => normalizePathForComparison(expandTilde(file))),
+	);
 	if (method === "apfs") {
 		// Only the APFS copy-and-swap uses scratch directories. Archiving can carry a
 		// leftover inside an artifact tree into the archive root.
@@ -2018,13 +2034,15 @@ async function runCompressGc(options: ResolvedGcOptions, archiveRoot: string): P
 			[sessionsRoot, archiveRoot],
 			options.apply,
 			result.errors,
+			new Set(Array.from(excludedTranscripts, file => normalizePathForComparison(sessionArtifactsPath(file)))),
 		);
 	}
 	if (options.apply) {
 		// Without it, a volume that ignores the request would still copy and verify every candidate.
 		try {
-			if (!(await compressionWorks(sessionsRoot, method))) {
-				result.probeFailure = `${method} compression stored a compressible probe file uncompressed`;
+			if (!(await compressionWorks(sessionsRoot, method, options.apfsCompressor))) {
+				const compressor = method === "apfs" ? `${method} (${options.apfsCompressor})` : method;
+				result.probeFailure = `${compressor} compression stored a compressible probe file uncompressed`;
 				return result;
 			}
 		} catch (error) {
@@ -2036,6 +2054,10 @@ async function runCompressGc(options: ResolvedGcOptions, archiveRoot: string): P
 	result.scanned = transcripts.length;
 	const cutoffMs = Date.now() - Math.max(options.compressAfterDays * DAY_MS, GC_WRITE_GRACE_MS);
 	for (const transcript of options.track.each("Scanning sessions to compress", transcripts)) {
+		if (excludedTranscripts.size > 0 && excludedTranscripts.has(normalizePathForComparison(transcript))) {
+			result.skippedExcluded += 1;
+			continue;
+		}
 		let files: string[];
 		try {
 			if (!(await isIdleTranscript(transcript, cutoffMs))) continue;
@@ -2068,7 +2090,7 @@ async function runCompressGc(options: ResolvedGcOptions, archiveRoot: string): P
 				result.allocatedBefore += candidate.allocated;
 			}
 			if (!options.apply) continue;
-			const batch = await compressFilesInPlace(candidates, method, tree.transcripts);
+			const batch = await compressFilesInPlace(candidates, method, tree.transcripts, options.apfsCompressor);
 			result.compressed += batch.compressed;
 			result.allocatedAfter += batch.allocatedAfter;
 			result.errors.push(...batch.errors);
@@ -2475,6 +2497,7 @@ function renderText(result: GcResult): string {
 					`compress: ${compress.compressed}/${compress.wouldCompress} files in ${compress.sessions} sessions, ${formatBytes(compress.allocatedBefore)} on disk before${after}`,
 				);
 				if (compress.skippedLive > 0) lines.push(`compress skipped live: ${compress.skippedLive}`);
+				if (compress.skippedExcluded > 0) lines.push(`compress skipped excluded: ${compress.skippedExcluded}`);
 			}
 			if (compress.leftoverScratchDirs > 0) {
 				const verb = result.apply ? "removed" : "found";

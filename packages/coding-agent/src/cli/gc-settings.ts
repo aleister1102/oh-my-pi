@@ -30,6 +30,16 @@ export const cfgGcCompress = register({ id: "gc.compress", type: "boolean", defa
 
 export const cfgGcCompressAfterDays = register({ id: "gc.compressAfterDays", type: "number", default: 7 });
 
+export const APFS_COMPRESSORS = ["ditto", "applesauce"] as const;
+export type ApfsCompressor = (typeof APFS_COMPRESSORS)[number];
+
+export const cfgGcApfsCompressor = register({
+	id: "gc.apfsCompressor",
+	type: "enum",
+	values: APFS_COMPRESSORS,
+	default: "ditto",
+});
+
 // Opt-in: rewrites idle transcripts without the provider replay data a resumed
 // turn would replay natively (signatures, encrypted reasoning, cached responses).
 export const cfgGcStrip = register({ id: "gc.strip", type: "boolean", default: false });
