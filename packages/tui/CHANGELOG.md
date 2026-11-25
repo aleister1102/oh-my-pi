@@ -7,6 +7,49 @@
 ### Breaking Changes
 
 - Removed the public `oneLine` export from `@oh-my-pi/pi-tui/term/painters/picker`; use `flattenLine` from `@oh-my-pi/pi-tui/text/sanitize` instead.
+### Added
+
+- Added Vim `W`, `B`, and `E` motions for navigating whitespace-delimited WORDs ([#13099](https://github.com/can1357/oh-my-pi/pull/13099) by [@Scott-Simmons](https://github.com/Scott-Simmons)).
+- Added Vim `s`/`S` (substitute characters / lines, Visual `S` changes whole lines) and the linewise line motions `-`, `+`, and `_` ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+- Added Vim redo (`Ctrl+R`) and counted undo (`3u`); undo and redo return the cursor to where the change began, as in Vim ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+- Added Vim registers: named `"a`–`"z` (uppercase appends), `"0` for yanks, `"1`–`"9` and `"-` for deletes, and the `"_` black hole ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+- Added Vim `X`, `Y`, `~`, the case operators `g~`/`gu`/`gU` (with `g~~`/`guu`/`gUU`), `gJ`, `ge`/`gE`, `gp`/`gP`, `gv`, and `gi` ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+- Added Vim counted inserts (`3ix`, `2ofoo`), Visual `p`/`P`/`r`/`u`/`U`/`~`, and Visual `X`/`D`/`Y`/`C`/`R` on whole lines ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+- Added Vim `gj`/`gk` to move by screen row through wrapped lines ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+- Added `Editor.onHistorySearch`, which Vim's Normal-mode `/` and `?` call so the host can open its prompt-history search ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+- Added Vim `:` in Normal mode on an empty prompt: it types `/` in Insert mode, so the slash-command menu opens ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+- Added Vim `"+p`/`"*p` to put the system clipboard; `Editor.onYank` now also gets the register name ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+- Added `vimMode` and `configureEditor` options to `HtmlFormDialog` and `HookEditorComponent`: with `vimMode` their text boxes are Vim-mode editors (a form's one-line fields and "Other" answers too; passwords stay plain), `j`/`k` step between a form's option rows, and `Escape` leaves Insert mode before it closes or cancels anything ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+- Added `Editor.vimStartMode` and `Editor.resetVimMode()`: each prompt (on enabling Vim mode, after a submit, on reset) starts in the start mode; Normal-mode `k`/`j`/`-`/`+` past the first or last line step through prompt history ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+- Added `Editor.captureHistoryState()`, which hosts override so a remembered draft (and Vim's `k`/`j` history steps) brings back the attachments they keep beside the text; `CustomEditor` implements it ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+
+### Changed
+
+- `Editor` re-announces its Vim mode through `onVimModeChange` when it gains focus, so a host's cursor shape follows the editor holding the keys ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+- The `vim` status-line segment shows a pending command even with `display: "none"`, which now hides only the mode ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+
+### Fixed
+
+- Fixed Tern Plan Review annotations being dropped before they reached omp, so saved comments now enable Refine ([#20250](https://github.com/can1357/oh-my-pi/pull/20250) by [@ash-miku](https://github.com/ash-miku))
+- Fixed Ctrl+[ not leaving Vim Insert, Replace or Visual mode, or cancelling a pending operator, under the Kitty keyboard protocol or modifyOtherKeys; inside the Vim modes it now does what Escape does ([#19547](https://github.com/can1357/oh-my-pi/issues/19547), [#20209](https://github.com/can1357/oh-my-pi/pull/20209) by [@JamieJ5926](https://github.com/JamieJ5926))
+- Truncated `ast_grep` results show the exact next offset (`use skip=N for the next page`) in the result view and the native view; results recorded without it keep the generic hint ([#20203](https://github.com/can1357/oh-my-pi/pull/20203) by [@MikeeI](https://github.com/MikeeI))
+- Fixed the dot between extension statuses in the status bar drawing in the accent colour instead of the dim separator colour ([#15740](https://github.com/can1357/oh-my-pi/issues/15740), [#20218](https://github.com/can1357/oh-my-pi/pull/20218) by [@JamieJ5926](https://github.com/JamieJ5926))
+- Fixed the cursor drifting left while typing Korean in Paradev terminals ([#20246](https://github.com/can1357/oh-my-pi/pull/20246) by [@HuitaePark](https://github.com/HuitaePark))
+- Fixed the TUI in a Herdr desktop terminal staying at the smaller size Herdr reported for a peek, drawing in the top part of the pane over stale rows until the window was resized ([#20222](https://github.com/can1357/oh-my-pi/pull/20222) by [@bbelchak](https://github.com/bbelchak))
+- Zellij's own dark or light report now sets the detected appearance, so a light Zellij theme over a dark host background is no longer detected as dark ([#20132](https://github.com/can1357/oh-my-pi/issues/20132), [#20207](https://github.com/can1357/oh-my-pi/pull/20207) by [@JamieJ5926](https://github.com/JamieJ5926)).
+- Fixed Ctrl+V doing nothing in an `ask` form's text inputs, textareas, and Other answers. Clipboard images still require an open option note ([#20217](https://github.com/can1357/oh-my-pi/pull/20217) by [@SuperUserA](https://github.com/SuperUserA))
+- `repairTaskParams()` now promotes a JSON-string `tasks` payload to an array and repairs item prose, so a string-encoded batch call reaches validation intact ([#20190](https://github.com/can1357/oh-my-pi/pull/20190) by [@arfoux](https://github.com/arfoux))
+- Fixed Vim `.` not retyping the inserted text when the keys arrived in one burst (e.g. `ccfoo` typed quickly) ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+- Fixed Vim `w`, `b`, and `e` stopping at the end of the line; they now cross lines like Vim's, and `dw`, `d}`, and `2D` follow Vim's rules for multi-line and end-of-line spans ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+- Fixed Vim `gg`, `G`, `dd`, and linewise puts landing in column 0 instead of the first non-blank; `dk` on the first line no longer deletes it; `D`/`C` no longer leave `j`/`k` stuck at line end ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+- Fixed Vim `v$` not selecting through the line break and `g`-commands (`gg`, `gU`) doing nothing in Visual mode ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+- Fixed Vim `cc`, `cj`, and other linewise changes keeping the start of the line when the cursor was mid-line, and storing the old text so `p` spliced it into a line instead of putting it back as whole lines ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+- Fixed Vim `di(`, `ci{`, and other bracket objects doing nothing when the cursor is before the brackets; like Vim 9.2 they now use the next pair ahead ([#20037](https://github.com/can1357/oh-my-pi/pull/20037) by [@lericson](https://github.com/lericson))
+
+### Removed
+
+- Removed `MCPProgress` and `parseMCPProgress` from `@oh-my-pi/pi-tui/tools/mcp`; they are exported from `@oh-my-pi/pi-tui/tools/mcp-progress` ([#20224](https://github.com/can1357/oh-my-pi/pull/20224) by [@JustasMasiulis](https://github.com/JustasMasiulis))
+
 ## [19.1.1] - 2026-11-23
 
 ### Added
@@ -2698,6 +2741,11 @@
 ### Added
 
 - Added the `change` UI event for annotated images, delivered to the node’s `onChange` handler without an associated item.
+- Added `TUI.requestComponentRender(component)` to schedule component-scoped renders for self-contained updates
+
+### Changed
+
+- Changed the render pipeline to reuse only affected root subtrees for component-scoped updates, avoiding full-tree compose when animations or other isolated component changes occur
 
 ### Fixed
 
@@ -2830,3 +2878,13 @@
 Older entries are archived in [packages/tui/CHANGELOG.md@c8fe41d6b157](https://github.com/can1357/oh-my-pi/blob/c8fe41d6b15724611a6bc7ec693e788a3f0c6c95/packages/tui/CHANGELOG.md).
 Older entries are archived in [packages/tui/CHANGELOG.md@89a034e2c7df](https://github.com/can1357/oh-my-pi/blob/89a034e2c7dfe2e55f68ce21eb86e6b9c905faf9/packages/tui/CHANGELOG.md).
 Older entries are archived in [packages/tui/CHANGELOG.md@a95c0a0773af](https://github.com/can1357/oh-my-pi/blob/a95c0a0773afdfdc7f1f40ef21e79af46c86c11e/packages/tui/CHANGELOG.md).
+- Added `@oh-my-pi/pi-tui`, the terminal UI that replaces `@oh-my-pi/pi-tui`: one tree of Tern Surface Protocol nodes drawn natively by Tern and as terminal rows elsewhere, with signals and a compiler-free JSX runtime, role-based painters and widgets, a terminal driver (input, capabilities, multiplexers, images, resize policies, notifications), Markdown and text utilities, themes, and test utilities (`testing/terminal`, `testing/cells`)
+
+### Fixed
+
+- Corrected math environment detection to properly handle blocks starting with `\begin`
+- Cmd+A highlights the full text of editors and inputs when the terminal forwards the shortcut. Typing, deleting or pasting replaces the selected range.
+- Native overlays follow the field they are anchored to, including when the field moves or shares its local key with another field.
+- Native menu and tree toggles now reach the intended control or branch. Clicking behind an explicitly modal sheet no longer moves keyboard focus out of it.
+- In terminal rows, modal sheets block clicks into the screen behind them. Inline clicks and hover follow the visible content after scrolling, and closing a fullscreen view restores the previous mouse setting.
+- Returning to the shell after a native session no longer leaves terminal replies in the shell prompt, including after a fatal error.
