@@ -140,6 +140,9 @@ test("autocorrects prose answers and option notes without sending a structured a
 		dispose();
 		autocorrect.mockRestore();
 		available.mockRestore();
+	}
+});
+
 /** The dialog's terminal rows at `width` (dark theme). */
 function rows(html: string, width: number): string[] {
 	const model = new HtmlFormModel(parseHtmlForm(html), { onSubmit: () => {}, onCancel: () => {} });
