@@ -94,9 +94,11 @@ test("Tab accepts a shown answer completion before leaving the field", async () 
 
 test("autocorrects prose answers and option notes without sending a structured answer to spelling", async () => {
 	const available = vi.spyOn(natives, "macOSSpellCheckerAvailable").mockReturnValue(true);
-	const autocorrect = vi.spyOn(natives, "macOSAutocorrectWord").mockImplementation(async (line, start, length) =>
-		line.slice(start, start + length) === "recieved" ? "received" : null,
-	);
+	const autocorrect = vi
+		.spyOn(natives, "macOSAutocorrectWord")
+		.mockImplementation(async (line, start, length) =>
+			line.slice(start, start + length) === "recieved" ? "received" : null,
+		);
 	const onSubmit = vi.fn();
 	const model = new HtmlFormModel(
 		parseHtmlForm(`<form>
